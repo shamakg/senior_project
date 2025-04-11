@@ -1,0 +1,160 @@
+START metadata
+    START idinfo
+        START citation
+            origin =    USGS EROS;
+            pubdate =   Sat Mar 11 19:33:38 2017;
+            title =     USGS eMODIS CONUS 7-Day Composite;
+        END citeinfo
+
+        START descript
+            abstract =  Composite of the last 7 day eMODIS interval bounded to the contiguous U.S.;
+            purpose =   Historical and Operational Vegetation Monitoring;
+        END descript
+
+        START keywords
+            START theme
+                themekey =   See eMODIS in NASA GCMD;
+            END theme
+            START place
+                placekey =  CONUS;
+            END place
+            START temporal
+                tempkey =    7 day intervals based on AVHRR calendar;
+            END temporal
+        END keywords
+
+        accconst =  None;
+        useconst =  None;
+    END idinfo
+
+    START spdoinfo
+        direct =    Raster;
+        START rastinfo
+            rasttype =  Pixel;
+            rowcount =  2889;
+            colcount =  4587;
+        END rastinfo
+    END spdoinfo
+
+    START spref
+        START horizsys
+            START planar
+                START mapproj
+                    mapprojn =  Lambert Azimuthal Equal Area;
+                    START lamberta
+                        longcm =    -100;
+                        latprjo =   45;
+                        feast =     0;
+                        fnorth =    0;
+                    END lamberta
+                END mapproj
+            END planar
+        END horizsys
+        START geodetic
+            horizdn =   WGS84;
+        END geodetic
+    END spref
+
+    START eainfo
+        START attr
+            attrlabl =  Pixel Resolution;
+            attrdef =   1000 meter;
+        END attr
+        START attr
+            attrlabl =  Platform;
+            attrdef =   AQUA;
+        END attr
+        START attr
+            attrlabl =  Sensor Short Name;
+            attrdef =   MODIS;
+        END attr
+        START attr
+            attrlabl =  Sensor Long Name;
+            attrdef =   Moderate Resolution Imaging Spectroradiometer;
+        END attr
+        START attr
+            attrlabl =  Day Night;
+            attrdef =   Day;
+        END attr
+        START attr
+            attrlabl =  Processing Level;
+            attrdef =   NDVI Composite;
+        END attr
+        START attr
+            attrlabl =  Data Type;
+            attrdef =   Little endian signed 16-bit integer;
+        END attr
+        START attr
+            attrlabl =  Fill Value;
+            attrdef =   -2000;
+        END attr
+        START attr
+            attrlabl =  Scaling Factor;
+            attrdef =   0.0001;
+        END attr
+        START attr
+            attrlabl =  Upper Left Latitude;
+            attrdef =   48.4030555;
+        END attr
+        START attr
+            attrlabl =  Upper Left Longitude;
+            attrdef =   -128.5300591;
+        END attr
+        START attr
+            attrlabl =  Upper Right Latitude;
+            attrdef =   46.710;
+        END attr
+        START attr
+            attrlabl =  Upper Right Longitude;
+            attrdef =   -65.410;
+        END attr
+        START attr
+            attrlabl =  Lower Right Latitude;
+            attrdef =   22.4793919;
+        END attr
+        START attr
+            attrlabl =  Lower Right Longitude;
+            attrdef =   -75.4163527;
+        END attr
+        START attr
+            attrlabl =  Lower Left Latitude;
+            attrdef =   23.590;
+        END attr
+        START attr
+            attrlabl =  Lower Left Longitude;
+            attrdef =   -119.970;
+        END attr
+        START attr
+            attrlabl =  Center Latitude;
+            attrdef =   38.73686;
+        END attr
+        START attr
+            attrlabl =  Center Longitude;
+            attrdef =   -97.202;
+        END attr
+        START attr
+            attrlabl =  NDVI Max;
+            attrdef =   10000;
+        END attr
+        START attr
+            attrlabl =  NDVI Min;
+            attrdef =   -1999;
+        END attr
+        START attr
+            attrlabl =  Compositing Interval;
+            attrdef =   7-Day;
+        END attr
+    END eainfo
+
+    START timeinfo
+        START rngdates
+            begdate =   2015-09-08;
+            enddate =   2015-09-14;
+        END rngdates
+    END timeinfo
+
+    START software
+        type = eMODIS
+        version = 4.1
+    END software
+END metadata
