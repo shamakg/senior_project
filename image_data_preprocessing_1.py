@@ -1,15 +1,20 @@
 import pandas as pd
 
 # Load yo   ur dataset
-df = pd.read_csv("emodis_ndvi_v6_67f83d3a4cadc768.csv", encoding='latin1')
+df = pd.read_csv("emodis_ndvi_v6_67f83d3a4cadc768.csv", encoding='latin1', index_col=False)
 print(df.head())
 
+# Convert Begin Date to datetime with UTC
 df['Begin Date'] = pd.to_datetime(df['Begin Date'], utc=True)
 
-# Create a new column: the week start date (e.g., Monday)
+# Create a column that represents the week
 df['Week Start'] = df['Begin Date'].dt.to_period('W').apply(lambda r: r.start_time)
 
-# Keep the first entry for each week
-df_weekly = df.sort_values('Begin Date').groupby('Week Start').first().reset_index()
+# Get the first row (earliest Begin Date) per week using idxmin
+idx = df.groupby('Week Start')['Begin Date'].idxmin()
+df_weekly = df.loc[idx].sort_values('Begin Date')
 
-print(df_weekly.head())
+# Save to a new file
+df_weekly.to_csv('weekly_metadata_filtered.csv', index=False)
+
+print("✅ Saved correctly with proper Entity ID as 'weekly_metadata_filtered.csv'") 
