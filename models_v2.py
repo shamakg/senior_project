@@ -1,0 +1,150 @@
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
+import matplotlib.pyplot as plt
+
+# Load datasets
+env_data = pd.read_parquet("combined_ButteCounty_Averages_NEW.parquet", engine='pyarrow')
+fire_data = pd.read_csv("butte_fires_NEW.csv")
+
+# Convert date columns to datetime format
+env_data['date'] = pd.to_datetime(env_data['week_start'])
+fire_data['date'] = pd.to_datetime(fire_data['Ig_Date'])
+
+# Filter data to the last 5 years
+env_data = env_data[env_data['date'] >= pd.to_datetime("2012-01-01")]
+fire_data = fire_data[fire_data['date'] >= pd.to_datetime("2012-01-01")]
+
+# Extract relevant fire columns
+fire_data = fire_data[['date', 'BurnBndAc', 'BurnBndLat', 'BurnBndLon']].copy()
+fire_data['BurnBndAc'] = fire_data['BurnBndAc'].fillna(0)
+
+# Define grid parameters
+grid_origin_lon = -122.5
+grid_origin_lat = 39.2
+chunk_size = 0.015  # 0.015 grid size
+
+# Compute grid indices for fire data
+fire_data['grid_x'] = ((fire_data['BurnBndLon'] - grid_origin_lon) / chunk_size).apply(np.floor).astype(int)
+fire_data['grid_y'] = ((fire_data['BurnBndLat'] - grid_origin_lat) / chunk_size).apply(np.floor).astype(int)
+
+# Generate affected grid cells from fire data
+def get_affected_cells(row):
+    affected = []
+    center_x = int(np.floor((row['BurnBndLon'] - grid_origin_lon) / chunk_size))
+    center_y = int(np.floor((row['BurnBndLat'] - grid_origin_lat) / chunk_size))
+    radius = int(np.ceil(np.sqrt(row['BurnBndAc']) / np.sqrt(640)))  # Approximate radius of burn area
+    for dx in range(-radius, radius + 1):
+        for dy in range(-radius, radius + 1):
+            affected.append((row['date'], center_x + dx, center_y + dy))
+    return affected
+
+overlay_fire_data = fire_data.apply(get_affected_cells, axis=1).explode().dropna()
+overlay_fire_data = pd.DataFrame(overlay_fire_data.tolist(), columns=['date', 'grid_x', 'grid_y'])
+overlay_fire_data['fire_occurred'] = 1
+fire_occurrence = overlay_fire_data.drop_duplicates().reset_index(drop=True)
+
+# Ensure correct types
+fire_occurrence['grid_x'] = fire_occurrence['grid_x'].astype(int)
+fire_occurrence['grid_y'] = fire_occurrence['grid_y'].astype(int)
+
+# Normalize grid indices for environmental data
+env_data['grid_x'] = ((env_data['grid_x'] - grid_origin_lon) / chunk_size).apply(np.floor).astype(int) 
+env_data['grid_y'] = ((env_data['grid_y'] - grid_origin_lat) / chunk_size).apply(np.floor).astype(int)
+
+# Filter fire_data based on environmental bounds
+min_lat = grid_origin_lat
+max_lat = grid_origin_lat + chunk_size * env_data['grid_y'].max()
+min_lon = grid_origin_lon
+max_lon = grid_origin_lon + chunk_size * env_data['grid_x'].max()
+
+fire_data = fire_data[
+    (fire_data['BurnBndLat'] >= min_lat) &
+    (fire_data['BurnBndLat'] <= max_lat) &
+    (fire_data['BurnBndLon'] >= min_lon) &
+    (fire_data['BurnBndLon'] <= max_lon)
+]
+
+# Merge environment and fire occurrence data
+data = pd.merge(env_data, fire_occurrence[['date', 'grid_x', 'grid_y', 'fire_occurred']], on=['date', 'grid_x', 'grid_y'], how='left')
+
+# Fill missing fire occurrences with 0 (no fire)
+data['fire_occurred'] = data['fire_occurred'].fillna(0)
+
+# Print fire occurrence class distribution
+percentages = data['fire_occurred'].value_counts(normalize=True) * 100
+print("Fire Occurrence Distribution (%):")
+print(percentages)
+
+# Feature selection
+features = [
+    "dewpoint_temperature_2m",
+    "evaporation_from_bare_soil_sum",
+    "volumetric_soil_water_layer_2",
+    "temperature_2m",
+    "total_precipitation_sum",
+    "leaf_area_index_low_vegetation_min"
+]
+
+scaler = MinMaxScaler()
+data_scaled = scaler.fit_transform(data[features])
+
+# Create sequences for LSTM input
+def create_sequences(data, seq_length, forecast_horizon):
+    X, y = [], []
+    for i in range(len(data) - seq_length - forecast_horizon):
+        X.append(data[i:i+seq_length])
+        y.append(data[i+seq_length+forecast_horizon][-1])  # Predict fire occurrence at forecast horizon
+    return np.array(X), np.array(y)
+
+seq_length = 30
+forecast_horizon = 29  # Predict 30 days ahead
+X, y = create_sequences(data_scaled, seq_length, forecast_horizon)
+
+# Split into train and test
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# Compute class weights to handle imbalance
+class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+class_weight_dict = dict(zip(np.unique(y_train), class_weights))
+
+# Build and train the LSTM model
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+
+model = Sequential([
+    LSTM(50, activation='relu', return_sequences=True, input_shape=(seq_length, X.shape[2])),
+    Dropout(0.2),
+    LSTM(50, activation='relu'),
+    Dropout(0.2),
+    Dense(1, activation='sigmoid')  # Binary classification for fire occurrence
+])
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Train the model with class weights
+history = model.fit(X_train, y_train, epochs=5, batch_size=16, validation_data=(X_test, y_test), class_weight=class_weight_dict)
+
+# Plot training and validation loss
+plt.plot(history.history['loss'], label='Train Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.legend()
+plt.show()
+
+# Save the trained model
+model.save("wildfire_lstm_model.h5")
+
+# Visualize the fire grid (optional)
+def plot_fire_grid():
+    plt.figure(figsize=(10, 8))
+    plt.scatter(fire_occurrence['grid_x'], fire_occurrence['grid_y'], c='red', label='Fire Occurrence', alpha=0.6)
+    plt.xlabel("Grid X (Longitude-based)")
+    plt.ylabel("Grid Y (Latitude-based)")
+    plt.title("Fire Occurrences Mapped to Grid Cells")
+    plt.legend()
+    plt.show()
+
+plot_fire_grid()
