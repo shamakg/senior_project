@@ -49,12 +49,22 @@ def extract_ndvi_from_zip(zip_path, extract_to):
                     print(f"Removed empty folder {dir_path}")
 
 def process_all_zips(zip_folder, output_folder):
-    
     for item in os.listdir(zip_folder):
         if item.lower().endswith('.zip'):
             zip_path = os.path.join(zip_folder, item)
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    # Test if the zip is valid
+                    if zip_ref.testzip() is not None:
+                        print(f"Corrupt ZIP file: {zip_path}, skipping.")
+                        continue
+            except zipfile.BadZipFile:
+                print(f"Skipping invalid ZIP file: {zip_path}")
+                continue
+            
+            # Proceed only if ZIP is valid
             extract_ndvi_from_zip(zip_path, output_folder)
-            # Remove the original zip file to save space
+            
             os.remove(zip_path)
             print(f"Removed original ZIP file: {zip_path}")
 

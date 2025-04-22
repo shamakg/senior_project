@@ -1,20 +1,21 @@
 import pandas as pd
 
+# Load your Landsat metadata CSV file
+df = pd.read_csv("landsat_ot_c2_l2_6801609f32a9692f.csv", encoding='latin1')
 
-df = pd.read_csv("emodis_ndvi_v6_67f83d3a4cadc768.csv", encoding='latin1', index_col=False)
-print(df.head())
+# Convert 'Date Acquired' to datetime
+df['Date Acquired'] = pd.to_datetime(df['Date Acquired'])
 
+# Add year-week identifier
+df['YearWeek'] = df['Date Acquired'].dt.strftime('%Y-%U')
 
-df['Begin Date'] = pd.to_datetime(df['Begin Date'], utc=True)
+# Drop duplicates per week (keeping the first row of each week)
+weekly_df = df.drop_duplicates(subset='YearWeek', keep='first')
 
+# Optionally drop the helper column
+weekly_df = weekly_df.drop(columns=['YearWeek'])
 
-df['Week Start'] = df['Begin Date'].dt.to_period('W').apply(lambda r: r.start_time)
+# Save to new CSV
+weekly_df.to_csv("landsat_weekly_sample.csv", index=False)
 
-
-idx = df.groupby('Week Start')['Begin Date'].idxmin()
-df_weekly = df.loc[idx].sort_values('Begin Date')
-
-
-df_weekly.to_csv('weekly_metadata_filtered.csv', index=False)
-
-print("Saved correctly with proper Entity ID as 'weekly_metadata_filtered.csv'") 
+print("Weekly sample created with", len(weekly_df), "rows.")
