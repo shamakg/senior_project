@@ -1,93 +1,366 @@
-import React, { useState } from "react";
-import { MapContainer, TileLayer, Marker, useMapEvents, Polygon } from "react-leaflet"; // Ensure Polygon is imported
+import React, { useState, useEffect } from "react";
+import { MapContainer, TileLayer, Rectangle, Popup, LayerGroup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import axios from "axios";
+import "./App.css"; 
+import L from 'leaflet';
+import 'leaflet.heat';
+import Slider from 'rc-slider';
+import 'rc-slider/assets/index.css';
 
-const FireRiskMap = () => {
-  const [selectedLocation, setSelectedLocation] = useState(null);
-  const [selectedTime, setSelectedTime] = useState(0); // State for the time slider
+const BUTTE_BOUNDS = [
+  [39.2, -122.6],
+  [39.9, -121.2],
+];
 
-  // Capture click events on the map
-  const LocationMarker = () => {
-    useMapEvents({
-      click(e) {
-        setSelectedLocation(e.latlng);
-      },
-    });
+const TILE_SIZE = 1.0 / 69;
 
-    return selectedLocation ? (
-      <Marker position={selectedLocation}></Marker>
-    ) : null;
+function generateGrid(bounds) {
+  const [southWest, northEast] = bounds;
+  const grid = [];
+  for (let lat = southWest[0]; lat < northEast[0]; lat += TILE_SIZE) {
+    for (let lng = southWest[1]; lng < northEast[1]; lng += TILE_SIZE) {
+      grid.push([
+        [lat, lng],
+        [lat + TILE_SIZE, lng + TILE_SIZE],
+      ]);
+    }
+  }
+  return grid;
+}
+
+function getGridIdFromBounds(bounds) {
+  const latCenter = (bounds[0][0] + bounds[1][0]) / 2;
+  const lngCenter = (bounds[0][1] + bounds[1][1]) / 2;
+
+  const yIndex = Math.floor((latCenter - BUTTE_BOUNDS[0][0]) / TILE_SIZE);
+  const xIndex = Math.floor((lngCenter - BUTTE_BOUNDS[0][1]) / TILE_SIZE);
+
+  return `${yIndex}_${xIndex}`;
+}
+
+function App() {
+  const [selectedBounds, setSelectedBounds] = useState(null);
+  const [prediction, setPrediction] = useState(null);
+  const [grid, setGrid] = useState([]);
+  const [noDataGrids, setNoDataGrids] = useState(new Set());
+  const [features, setFeatures] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [selectedWeek, setSelectedWeek] = useState(null);
+  const [availableWeeks, setAvailableWeeks] = useState([]);
+  const [heatmapData, setHeatmapData] = useState(() => new Map());
+  const [fireWeeks, setFireWeeks] = useState(new Set());
+
+  useEffect(() => {
+    setGrid(generateGrid(BUTTE_BOUNDS));
+  }, []);
+
+  useEffect(() => {
+    const fetchNoDataGrids = async () => {
+      try {
+        const response = await fetch("http://127.0.0.1:5000/api/get-no-data-grids", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ week: selectedWeek }),
+        });
+  
+        const data = await response.json();
+        console.log("No data grids:", data.no_data_grids);
+  
+        // SET the state here so it filters out correctly
+        setNoDataGrids(new Set(data.no_data_grids));
+      } catch (error) {
+        console.error("Error fetching no-data grids:", error);
+        setNoDataGrids(new Set());  // fallback: no excluded tiles
+      }
+    };
+  
+    if (selectedWeek) {
+      fetchNoDataGrids();
+      setSelectedBounds(null);
+      setPrediction(null);
+      setFeatures(null);
+    }
+  }, [selectedWeek]);
+
+  useEffect(() => {
+    const fetchWeeks = async () => {
+      const res = await axios.get("http://127.0.0.1:5000/api/get-weeks");
+      setAvailableWeeks(res.data.weeks);
+      setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);  // latest week by default
+    };
+    fetchWeeks();
+
+    axios.get("http://127.0.0.1:5000/api/get-fire-weeks")
+    .then(res => setFireWeeks(new Set(res.data.fire_weeks)))
+    .catch(() => setFireWeeks(new Set()));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedWeek || grid.length === 0) return;
+  
+    // Fetch no-data grids (unchanged)
+    const fetchNoDataGrids = async () => {
+      try {
+        const response = await fetch("http://127.0.0.1:5000/api/get-no-data-grids", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ week: selectedWeek }),
+        });
+  
+        const data = await response.json();
+        console.log("No data grids:", data.no_data_grids);
+  
+        // Set the state here so it filters out correctly
+        setNoDataGrids(new Set(data.no_data_grids));
+      } catch (error) {
+        console.error("Error fetching no-data grids:", error);
+        setNoDataGrids(new Set()); // fallback: no excluded tiles
+      }
+    };
+  
+    // Fetch heatmap data
+    const fetchHeatmapData = async () => {
+      const payload = grid.map((bounds) => ({
+        gridId: getGridIdFromBounds(bounds),
+        bounds,
+      }));
+      try {
+        const res = await axios.post("http://127.0.0.1:5000/api/predict-all", {
+          week: selectedWeek,
+          tiles: payload,
+        });
+    
+        // Create a map of gridId to prediction value
+        const predictionsMap = new Map();
+        res.data.predictions.forEach((p) => {
+          predictionsMap.set(p.grid_id, p.prediction);  // Assuming p has a gridId and prediction
+        });
+        setHeatmapData(predictionsMap);
+      } catch (error) {
+        console.error("Error fetching heatmap data:", error);
+        setHeatmapData(new Map());  // Fallback: empty heatmap
+      }
+    };
+  
+    if (selectedWeek) {
+      fetchNoDataGrids();
+      fetchHeatmapData();
+      setSelectedBounds(null);
+      setPrediction(null);
+      setFeatures(null);
+    }
+  }, [selectedWeek, grid]);
+
+  // useEffect(() => {
+  //   if (availableWeeks.length > 0) {
+  //     // pick the last (latest) week
+  //     setSelectedWeek(availableWeeks[availableWeeks.length - 1]);
+  //   }
+  // }, [availableWeeks]);
+
+  const handleTileClick = async (bounds) => {
+    setSelectedBounds(bounds);
+    setPrediction("Loading...");
+    setFeatures(null);
+    try {
+      const [predRes, featRes] = await Promise.all([
+        axios.post("http://127.0.0.1:5000/api/predict", { bounds, week: selectedWeek }),
+        axios.post("http://127.0.0.1:5000/api/get-features", { bounds }),
+      ]);
+      setPrediction(predRes.data.prediction);
+      setFeatures(featRes.data.features || {});
+    } catch (error) {
+      console.error("Prediction or feature fetch error:", error);
+      setPrediction("Error predicting fire risk");
+    }
   };
 
-  // Define the polygon for Butte County boundaries
-  const butteCountyBounds = [
-    [39.4, -121.9], // Southwest corner
-    [40.1, -121.9], // Northwest corner
-    [40.1, -121.4], // Northeast corner
-    [39.4, -121.4], // Southeast corner
-  ];
-
-  // Mock data for predictions (adjust based on your data)
-  const predictionData = [
-    { date: "2025-03-26", riskLevel: "Low" },
-    { date: "2025-03-27", riskLevel: "Moderate" },
-    { date: "2025-03-28", riskLevel: "High" },
-    // Add more prediction data as needed
-  ];
-
-  const handleSliderChange = (event) => {
-    setSelectedTime(event.target.value); // Set the time based on the slider value
+  const getPopupCenter = (bounds) => {
+    const lat = (bounds[0][0] + bounds[1][0]) / 2;
+    const lng = (bounds[0][1] + bounds[1][1]) / 2;
+    return [lat, lng];
   };
 
   return (
-    <div style={{ position: "relative", height: "100vh", width: "100%" }}>
-      <MapContainer
-        center={[39.7, -121.6]}
-        zoom={10}
-        style={{ height: "60%", width: "100%" }} // Reduced map size
-        maxBounds={[
-          [39.4, -121.9], // Southwest corner (latitude, longitude)
-          [40.1, -121.4], // Northeast corner (latitude, longitude)
-        ]}
-        maxZoom={12}
-        minZoom={10}
-      >
-        {/* OpenStreetMap Tile Layer (Free & No API Key Required) */}
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        />
-        {/* Outline of Butte County */}
-        {/*    */}
-        <LocationMarker />
-      </MapContainer>
+    <div className="app">
+      <header className="app-header">
+        <h1>Wildfire Prediction in Butte County</h1>
+        <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+          {sidebarOpen ? "Close Sidebar" : "Show Features"}
+        </button>
+      </header>
+      <div className="week-slider">
+        <label htmlFor="week-range"><strong>Select Week:</strong></label>
 
-      {/* Time Slider */}
-      <div
+        <div className="slider-container">
+          <input
+            id="week-range"
+            type="range"
+            min="0"
+            max={availableWeeks.length - 1}
+            value={availableWeeks.indexOf(selectedWeek)}
+            onChange={(e) => setSelectedWeek(availableWeeks[parseInt(e.target.value)])}
+            className="slider"
+            onMouseMove={(e) => {
+              const index = parseInt(e.target.value);
+              const tooltip = document.getElementById("tooltip");
+              if (tooltip) {
+                tooltip.style.left = `${(index / (availableWeeks.length - 1)) * 100}%`;
+                tooltip.innerText = availableWeeks[index];
+              }
+            }}
+          />
+          <div id="tooltip" className="slider-tooltip">{selectedWeek}</div>
+          <div className="slider-ticks">
+            {availableWeeks.map((_, index) => (
+              <div
+                key={index}
+                className={`tick ${index % Math.ceil(availableWeeks.length / 6) === 0 
+                  ? "tick-labeled" 
+                  : "tick-small"}`}
+                style={{ width: "1px", height: "6px", background: "#444" }}
+
+              />
+            ))}
+          </div>
+          <div className="slider-labels">
+            {availableWeeks.map((week, index) =>
+              index % Math.ceil(availableWeeks.length / 6) === 0 ? (
+                <span key={index} className="slider-label">
+                  {week}
+                </span>
+              ) : (
+                <span key={index} className="slider-label empty-label" />
+              )
+            )}
+          </div>
+        </div>
+        {/* Fire icons row */}
+        <div className="slider-fires">
+  {availableWeeks.map((week, index) =>
+    fireWeeks.has(week) ? (
+      <span
+        key={index}
         style={{
           position: "absolute",
-          top: "70%",
-          left: "10%",
-          width: "80%",
-          padding: "10px",
-          background: "white",
-          borderRadius: "5px",
-          boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+          left: `${(index / (availableWeeks.length - 1)) * 100}%`,  // This is the issue
+          transform: "translateX(-50%)",  // This centers the icons
+          fontSize: "14px",
         }}
       >
-        <label>Prediction Date: {predictionData[selectedTime].date}</label>
-        <input
-          type="range"
-          min="0"
-          max={predictionData.length - 1}
-          value={selectedTime}
-          onChange={handleSliderChange}
-          style={{ width: "100%" }}
-        />
-        <p>Risk Level: {predictionData[selectedTime].riskLevel}</p>
+        <img src="/vecteezy_fire-icon-on-transparent-background_19787026.png" alt="Fire" width="30" height="16" />
+      </span>
+    ) : null
+  )}
+</div>
+        <div className="week-display">Showing week: <strong>{selectedWeek}</strong></div>
+      </div>
+
+
+      <main className="map-container">
+        <MapContainer bounds={BUTTE_BOUNDS} scrollWheelZoom className="leaflet-map">
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution="&copy; OpenStreetMap contributors"
+          />
+
+          {grid
+            .filter((bounds) => {
+              const gridId = getGridIdFromBounds(bounds);
+              return !noDataGrids.has(gridId); // Only include tiles with data
+            })
+            .map((bounds,i) => {
+              const gridId = getGridIdFromBounds(bounds);
+              const pred = heatmapData.get(gridId) ?? 0;
+              const rawPred = Math.min(1, Math.max(0, pred));
+
+              // Stronger contrast
+              const boosted = Math.log1p(rawPred * 12) / Math.log(30);
+              const norm = Math.pow(boosted, 0.6);
+
+              let r, g, b;
+              if (norm < 0.5) {
+                // Neon yellow zone (brighter): from (255, 255, 50) → (255, 200, 0)
+                r = 255;
+                g = 255 - norm * 2 * 55;  // from 255 → 200
+                b = 50 - norm * 2 * 50;   // from 50 → 0
+              } else {
+                // Orange-red: from (255, 200, 0) → (255, 0, 0)
+                r = 255;
+                g = 200 * (1 - (norm - 0.5) * 2);  // 200 → 0
+                b = 0;
+              }
+
+              const color = `rgba(${r | 0},${g | 0},${b | 0},0.8)`;
+              return (
+                <Rectangle
+                  key={i}
+                  bounds={bounds}
+                  pathOptions={{ color, weight:1, fillOpacity:0.7 }}
+                  eventHandlers={{ click:()=>handleTileClick(bounds) }}
+                />
+              );
+            })}
+
+          {selectedBounds && prediction && (
+            <Popup position={getPopupCenter(selectedBounds)}>
+              <div>
+                <strong>Fire Proneness:</strong> {prediction}
+              </div>
+            </Popup>
+          )}
+        </MapContainer>
+      </main>
+
+      {/* Sidebar for features */}
+      <div className={`sidebar ${sidebarOpen ? "open" : ""}`}>
+        <button className="close-btn" onClick={() => setSidebarOpen(false)}>X</button>
+        <h3>Feature Details</h3>
+        {features ? (
+          <ul>
+            {Object.entries(features).map(([key, value]) => (
+              <li key={key}>
+                {key}: {typeof value === "number" ? value.toFixed(3) : value}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No features available.</p>
+        )}
+      </div>
+      <div style={{
+        position: 'absolute',
+        bottom: 20,
+        left: 20,
+        padding: 10,
+        background: 'white',
+        borderRadius: 8,
+        boxShadow: '0 0 5px rgba(0,0,0,0.3)',
+        fontFamily: 'sans-serif',
+        fontSize: 12
+      }}>
+        <div style={{ marginBottom: 5, fontWeight: 'bold' }}>Fire Risk</div>
+        <div style={{
+          display: 'flex',
+          height: 12,
+          width: 150,
+          background: 'linear-gradient(to right, yellow, orange, red)',
+          marginBottom: 4
+        }}></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>Low</span>
+          <span>High</span>
+        </div>
       </div>
     </div>
+    
+    
   );
-};
+}
 
-export default FireRiskMap;
+export default App;

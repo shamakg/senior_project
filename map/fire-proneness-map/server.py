@@ -1,0 +1,243 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS, cross_origin
+import pandas as pd
+import numpy as np
+
+app = Flask(__name__)
+CORS(app, origins=["http://localhost:3000"])
+
+TILE_SIZE = 1.0 / 69
+LAT_ORIGIN = 39.2
+LNG_ORIGIN = -122.6
+BUTTE_BOUNDS = [
+    [39.2, -122.6],
+    [39.9, -121.2],
+]
+
+
+
+all_predictions_df = pd.read_csv("all_predictions_5years.csv")
+all_predictions_df["scaled"] = all_predictions_df["raw_prob"] * 500
+
+# import numpy as np
+
+# Apply log transform to reduce the impact of large outliers
+# all_predictions_df["scaled"] = np.log1p(all_predictions_df["scaled"])
+
+# min_val = all_predictions_df["scaled"].min()
+# max_val = all_predictions_df["scaled"].max()
+# all_predictions_df["scaled"] = ((all_predictions_df["scaled"] - min_val) / (max_val - min_val) )**0.3
+predictions_by_week = {
+    week: group.set_index("grid_id")["scaled"].to_dict()
+    for week, group in all_predictions_df.groupby("week_start")
+}
+available_weeks = sorted(predictions_by_week.keys())  # for frontend use
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) After you build predictions_by_week, perform spatial imputation
+# ──────────────────────────────────────────────────────────────────────────────
+
+def generate_grid(bounds, tile_size=1.0 / 69):
+    south_west, north_east = bounds
+    grid = []
+    for lat in np.arange(south_west[0], north_east[0], tile_size):
+        for lng in np.arange(south_west[1], north_east[1], tile_size):
+            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
+    return grid
+
+
+def get_grid_id_from_bounds(bounds):
+    lat_center = (bounds[0][0] + bounds[1][0]) / 2
+    lng_center = (bounds[0][1] + bounds[1][1]) / 2
+    y_index = int((lat_center - LAT_ORIGIN) / TILE_SIZE)
+    x_index = int((lng_center - LNG_ORIGIN) / TILE_SIZE)
+    return f"{y_index}_{x_index}"
+
+# helper to parse "y_x" → (y:int, x:int)
+def parse_grid_id(gid):
+    y, x = gid.split("_")
+    return int(y), int(x)
+
+# for each week, fill any missing grid_id by neighbor mean
+for week, week_map in predictions_by_week.items():
+    # build a set of all ids we expect from the full grid
+    full_ids = { get_grid_id_from_bounds(b) for b in generate_grid(BUTTE_BOUNDS) }
+    # find the “suspicious” missing ones
+    missing_ids = full_ids - set(week_map.keys())
+
+    for gid in missing_ids:
+        y, x = parse_grid_id(gid)
+
+        above_id = f"{y-1}_{x}"
+        below_id = f"{y+1}_{x}"
+
+        above_val = week_map.get(above_id)
+        below_val = week_map.get(below_id)
+
+        if above_val is not None and below_val is not None:
+            week_map[gid] = (above_val + below_val) / 2
+        elif above_val is not None:
+            week_map[gid] = above_val
+        elif below_val is not None:
+            week_map[gid] = below_val
+        # else: skip – no vertical neighbors
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+
+full = pd.read_csv("final_data.csv", index_col=0) 
+full = (
+    full.sort_values("week_start")  # or another column that tells which to keep
+    .drop_duplicates("grid_id", keep="last")
+)
+full_feature_map = (
+    full
+    .set_index("grid_id")
+    .drop(columns=["week_start", "fire_occurred"], errors="ignore")
+    .to_dict(orient="index")
+)
+
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "OK"}), 200
+
+@app.route("/api/get-weeks", methods=["GET"])
+@cross_origin()
+def get_weeks():
+    return jsonify({"weeks": available_weeks})
+
+@app.route("/api/predict", methods=["POST", "OPTIONS"])
+@cross_origin()
+def predict():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
+    try:
+        week = request.json.get("week")
+        bounds = request.json.get("bounds")
+        if not bounds or len(bounds) != 2 or not week:
+            return jsonify({"error": "Invalid bounds or week"}), 400
+
+        grid_id = get_grid_id_from_bounds(bounds)
+        week_map = predictions_by_week.get(week, {})
+        if grid_id not in week_map:
+            return jsonify({"prediction": "No data for this grid"}), 200
+
+        calibrated_prob = week_map[grid_id]
+
+        print(f"Grid ID: {grid_id}, Calibrated Probability: {calibrated_prob}")
+        return jsonify({"prediction": str(round(calibrated_prob, 4))}), 200
+
+    except Exception as e:
+        print("Prediction error:", e)
+        return jsonify({"error": "Prediction failed"}), 500
+
+@app.route("/api/get-no-data-grids", methods=["POST", "OPTIONS"])
+@cross_origin()
+def get_no_data_grids():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
+    try:
+        week = request.json.get("week")
+        if not week:
+            return jsonify({"error": "Week not provided"}), 400
+
+        current_week_map = predictions_by_week.get(week, {})
+        all_grids = generate_grid(BUTTE_BOUNDS)
+        no_data_grids = []
+        for bounds in all_grids:
+            grid_id = get_grid_id_from_bounds(bounds)
+            if grid_id not in current_week_map:
+                no_data_grids.append(grid_id)
+        return jsonify({"no_data_grids": no_data_grids}), 200
+
+    except Exception as e:
+        print("No-data grid error:", e)
+        return jsonify({"error": "Failed to get no-data grids"}), 500
+    
+@app.route("/api/get-fire-weeks", methods=["GET"])
+@cross_origin()
+def get_fire_weeks():
+    try:
+        full_2 = pd.read_csv("fire_data.csv")
+        fire_weeks = full_2[full_2["fire_occurred"] == 1.0]["week_start"].unique().tolist()
+        print("FIRE WEEKS: ", fire_weeks)
+        return jsonify({"fire_weeks": fire_weeks}), 200
+    except Exception as e:
+        print("Fire weeks error:", e)
+        return jsonify({"error": "Failed to retrieve fire weeks"}), 500
+
+@app.route("/api/predict-all", methods=["POST", "OPTIONS"])
+@cross_origin()
+def predict_all():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
+    data = request.json or {}
+    week = data.get("week")
+    tiles = data.get("tiles", [])
+
+    if not week:
+        return jsonify({"error": "Week not provided"}), 400
+    if not isinstance(tiles, list):
+        return jsonify({"error": "Tiles must be a list"}), 400
+
+    week_map = predictions_by_week.get(week, {})
+    results = []
+
+    for tile in tiles:
+        # either use provided gridId or recompute
+        grid_id = tile.get("gridId") or get_grid_id_from_bounds(tile.get("bounds", []))
+        # look up prediction
+        pred = week_map.get(grid_id)
+        if pred is None:
+            continue
+        # compute center
+        b = tile["bounds"]
+        lat_center = (b[0][0] + b[1][0]) / 2
+        lng_center = (b[0][1] + b[1][1]) / 2
+        results.append({
+            "grid_id": grid_id,
+            "center": [lat_center, lng_center],
+            "prediction": float(round(pred, 4))
+        })
+
+    return jsonify({"predictions": results}), 200
+
+
+@app.route("/api/get-features", methods=["POST", "OPTIONS"])
+@cross_origin()
+def get_features():
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
+    try:
+        bounds = request.json.get("bounds")
+        if not bounds or len(bounds) != 2:
+            return jsonify({"error": "Invalid bounds"}), 400
+
+        grid_id = get_grid_id_from_bounds(bounds)
+        features = full_feature_map.get(grid_id)
+        if features is None:
+            return jsonify({"features": None}), 200
+
+        return jsonify({"features": features}), 200
+
+    except Exception as e:
+        print("Feature retrieval error:", e)
+        return jsonify({"error": "Failed to get features"}), 500
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    return response
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000, debug=True)
