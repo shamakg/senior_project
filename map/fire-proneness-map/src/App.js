@@ -7,6 +7,7 @@ import L from 'leaflet';
 import 'leaflet.heat';
 import Slider from 'rc-slider';
 import 'rc-slider/assets/index.css';
+import { Tooltip } from 'react-tooltip';
 
 const BUTTE_BOUNDS = [
   [39.2, -122.6],
@@ -186,6 +187,68 @@ function App() {
     return [lat, lng];
   };
 
+
+  const markInterval = 30;
+
+const marks = {};
+
+availableWeeks.forEach((week, i) => {
+  const showLabel = i % markInterval === 0;
+  const hasFire = fireWeeks.has(week);
+  const tooltipText = hasFire ? `There was really a fire here!` : `${week}`;
+    marks[i] = {
+      label: (
+        <div style={{ textAlign: "center", lineHeight: 1.2 }}
+        data-tooltip-id="week-tooltip"
+          data-tooltip-content={tooltipText}
+        >
+          {/* Fire icon gets moved up */}
+          {hasFire && (
+            <img
+              title={`There was really a fire here!`}
+              src="/vecteezy_fire-icon-on-transparent-background_19787026.png"
+              alt="Fire"
+              width="35"
+              height="20"
+              style={{
+                display: "block",
+                margin: "0 auto",
+                marginBottom: 2, // Add some spacing between the icon and text
+                position: "relative",
+                top: -20, // Move the fire icon up above the slider
+              }}
+            />
+          )}
+
+          {/* Add tick marks if no fire icon is present */}
+          {!hasFire && (
+            <div
+              title={`${week}`}
+              style={{
+                position: "relative",
+                top: -12, // Adjust position of tick mark to align with fire icons
+                width: 1.5,
+                height: 7, // Height of the tick mark
+                backgroundColor: "#d33", // Fire-themed color for tick marks
+                margin: "0 auto",
+              }}
+            />
+          )}
+
+          {/* Week label stays where it is */}
+          {showLabel && (
+            <div style={{ position: "relative", fontSize: 10, color: "#444", marginTop: 1, top: -8, }}>
+              {week}
+            </div>
+          )}
+        </div>
+      )
+    };
+});
+
+
+  
+
   return (
     <div className="app">
       <header className="app-header">
@@ -198,7 +261,28 @@ function App() {
         <label htmlFor="week-range"><strong>Select Week:</strong></label>
 
         <div className="slider-container">
-          <input
+        <Slider
+          min={0}
+          max={availableWeeks.length - 1}
+          marks={marks}
+          step={1}
+          value={availableWeeks.indexOf(selectedWeek)}
+          onChange={(idx) => setSelectedWeek(availableWeeks[idx])}
+          dot={false}
+          dotStyle={{ display: 'none' }}
+          trackStyle={{ backgroundColor: "#d33", height: 6 }}
+  handleStyle={{
+    borderColor: "black",
+    height: 16,
+    width: 16,
+    marginTop: -5,
+    backgroundColor: "#fff"
+  }}
+  railStyle={{ backgroundColor: "#d33", height: 6 }}
+        />
+        <Tooltip id="week-tooltip" place="top" style={{ backgroundColor: "#222", color: "#fff", fontSize: "12px", borderRadius: "4px" }} />
+
+          {/* <input
             id="week-range"
             type="range"
             min="0"
@@ -238,10 +322,10 @@ function App() {
                 <span key={index} className="slider-label empty-label" />
               )
             )}
-          </div>
+          </div> */}
         </div>
         {/* Fire icons row */}
-        <div className="slider-fires">
+        {/* <div className="slider-fires">
   {availableWeeks.map((week, index) =>
     fireWeeks.has(week) ? (
       <span
@@ -257,7 +341,7 @@ function App() {
       </span>
     ) : null
   )}
-</div>
+</div> */}
         <div className="week-display">Showing week: <strong>{selectedWeek}</strong></div>
       </div>
 
@@ -281,7 +365,9 @@ function App() {
 
               // Stronger contrast
               const boosted = Math.log1p(rawPred * 12) / Math.log(30);
-              const norm = Math.pow(boosted, 0.6);
+              // const norm = Math.pow(boosted, 0.6);
+              const norm = Math.pow(rawPred, 0.4);
+              
 
               let r, g, b;
               if (norm < 0.5) {

@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS, cross_origin
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import PowerTransformer, MinMaxScaler
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
@@ -16,8 +17,22 @@ BUTTE_BOUNDS = [
 
 
 
-all_predictions_df = pd.read_csv("all_predictions_5years.csv")
-all_predictions_df["scaled"] = all_predictions_df["raw_prob"] * 500
+all_predictions_df = pd.read_csv("all_predictions_5years_v2.csv")
+all_predictions_df["scaled"] = all_predictions_df["raw_prob"]*50
+
+
+# Extract the column as a 2D array (needed for sklearn)
+X = all_predictions_df[["scaled"]].values
+
+# Option 1: Yeo-Johnson (can handle zeros and negatives)
+pt = PowerTransformer(method='yeo-johnson')
+X_transformed = pt.fit_transform(X)
+
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X_transformed)
+
+all_predictions_df["scaled"] = X_scaled
+# all_predictions_df["scaled"] = all_predictions_df["scaled"] ** 0.5
 
 # import numpy as np
 
@@ -164,7 +179,7 @@ def get_no_data_grids():
 @cross_origin()
 def get_fire_weeks():
     try:
-        full_2 = pd.read_csv("fire_data.csv")
+        full_2 = pd.read_csv("fire_data.csv")  
         fire_weeks = full_2[full_2["fire_occurred"] == 1.0]["week_start"].unique().tolist()
         print("FIRE WEEKS: ", fire_weeks)
         return jsonify({"fire_weeks": fire_weeks}), 200

@@ -150,6 +150,8 @@ html, body, #root {
   position: relative;
   width: 80%;
   margin: 0 auto;
+  margin-top: 0.3rem;
+  margin-bottom: 0.3rem;
 }
 
 .slider {
@@ -244,8 +246,15 @@ html, body, #root {
 }
 
 .week-slider {
+  margin-top: 0.3rem;     
   margin-bottom: 1rem;
   text-align: center;
+}
+
+.week-display {
+  text-align: center;
+  margin-top: 1.5rem;
+  font-weight: bold;
 }
 
   
