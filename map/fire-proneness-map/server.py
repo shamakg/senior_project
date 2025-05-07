@@ -78,33 +78,25 @@ def test_file_access(file_id):
         return False
 
 def download_from_drive(file_id, output_path):
-    """Download file from Google Drive with better error handling"""
+    """Download file from Google Drive using gdown"""
     try:
-        # First test if file is accessible
-        if not test_file_access(file_id):
-            logger.error(f"File {file_id} is not accessible")
+        # Use the direct download URL format
+        url = f"https://drive.google.com/file/d/{file_id}/view"
+        logger.info(f"Downloading from: {url}")
+        
+        # Convert Path to string for gdown
+        output_str = str(output_path)
+        
+        # Use gdown with fuzzy=True for better handling of large files
+        gdown.download(url, output_str, fuzzy=True, quiet=False)
+        
+        # Verify the file was downloaded
+        if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
+            logger.info("Download completed successfully")
+            return True
+        else:
+            logger.error("Download failed - file is empty or doesn't exist")
             return False
-
-        # Try direct download with confirm token (bypass virus scan)
-        url = f"https://drive.google.com/uc?id={file_id}&confirm=t"
-        logger.info(f"Attempting download with confirm token from: {url}")
-        
-        # Download with gdown
-        success = gdown.download(url, str(output_path), quiet=False)
-        
-        if not success:
-            logger.error("Download failed")
-            return False
-        
-        # Verify the downloaded content is not HTML
-        with open(output_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read(1024)
-            if '<!DOCTYPE html>' in content or '<html>' in content:
-                logger.error("Downloaded content is HTML instead of data")
-                return False
-            
-        logger.info("Download completed successfully")
-        return True
             
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
