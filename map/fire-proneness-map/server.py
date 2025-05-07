@@ -69,7 +69,13 @@ def download_from_drive(file_id, output):
     try:
         # Use gdown with direct download URL
         url = f"https://drive.google.com/uc?id={file_id}"
-        gdown.download(url, output, quiet=False)
+        logger.info(f"Downloading from: {url}")
+        success = gdown.download(url, output, quiet=False)
+        
+        if not success:
+            logger.error("Download failed")
+            return False
+            
         logger.info("Download completed successfully")
         return True
     except Exception as e:
@@ -79,49 +85,34 @@ def download_from_drive(file_id, output):
 def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
     """Load data from Google Drive and cache it locally using chunks"""
     cache_path = CACHE_DIR / cache_filename
+    temp_csv_path = CACHE_DIR / f"temp_{cache_filename}.csv"
     
     # If cached file exists and is not empty, load it
     if cache_path.exists() and cache_path.stat().st_size > 0:
         try:
             logger.info(f"Loading from cache: {cache_filename}")
-            if cache_filename.endswith('.parquet'):
-                # Read parquet in chunks to save memory
-                df = pd.read_parquet(cache_path, engine='pyarrow')
-                logger.info(f"Successfully loaded {cache_filename} from cache")
-                return df
-            else:
-                # Read CSV in chunks to save memory
-                df = pd.read_csv(cache_path, chunksize=chunk_size)
-                df = pd.concat(df)  # Combine chunks
-                logger.info(f"Successfully loaded {cache_filename} from cache")
-                return df
+            df = pd.read_parquet(cache_path, engine='pyarrow')
+            logger.info(f"Successfully loaded {cache_filename} from cache")
+            return df
         except Exception as e:
             logger.error(f"Error reading cache {cache_filename}: {e}")
     
     # If not cached or cache invalid, download from Google Drive
     logger.info(f"Downloading {cache_filename} from Google Drive...")
-    output = io.BytesIO()
-    
-    # Try to download the file
-    if not download_from_drive(file_id, output):
-        logger.error(f"Failed to download {cache_filename}. Please check if the file is publicly accessible.")
-        return pd.DataFrame()
     
     try:
-        output.seek(0)
+        # Download to a temporary CSV file first
+        with open(temp_csv_path, 'wb') as f:
+            if not download_from_drive(file_id, f):
+                logger.error(f"Failed to download {cache_filename}")
+                return pd.DataFrame()
         
         # Read and process in chunks
         logger.info(f"Processing {cache_filename} in chunks...")
         chunks = []
-        for chunk in pd.read_csv(output, chunksize=chunk_size):
-            # Process each chunk
+        for chunk in pd.read_csv(temp_csv_path, chunksize=chunk_size):
             chunks.append(chunk)
-            # Clear memory
             del chunk
-        
-        # Clear the output buffer
-        output.close()
-        del output
         
         if not chunks:
             logger.error(f"No data found in {cache_filename}")
@@ -131,31 +122,23 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
         df = pd.concat(chunks, ignore_index=True)
         del chunks  # Clear memory
         
-        # Cache the data as parquet (more efficient than pickle)
+        # Cache the data as parquet
         logger.info(f"Caching {cache_filename}...")
-        parquet_path = cache_path.with_suffix('.parquet')
-        
-        # Write parquet in chunks to save memory
         table = pa.Table.from_pandas(df)
-        pq.write_table(table, parquet_path, compression='gzip')
+        pq.write_table(table, cache_path, compression='gzip')
+        
+        # Clean up temporary file
+        if temp_csv_path.exists():
+            temp_csv_path.unlink()
         
         logger.info(f"Successfully cached {cache_filename}")
         return df
+        
     except Exception as e:
         logger.error(f"Error processing {cache_filename}: {e}")
-        # If download fails but we have an old cache, try to use it
-        if cache_path.exists():
-            try:
-                logger.info(f"Attempting to use existing cache for {cache_filename}")
-                if cache_filename.endswith('.parquet'):
-                    df = pd.read_parquet(cache_path, engine='pyarrow')
-                    return df
-                df = pd.read_csv(cache_path, chunksize=chunk_size)
-                df = pd.concat(df)
-                return df
-            except Exception as cache_error:
-                logger.error(f"Failed to use cache for {cache_filename}: {cache_error}")
-                return pd.DataFrame()  # Return empty DataFrame as last resort
+        # Clean up temporary file if it exists
+        if temp_csv_path.exists():
+            temp_csv_path.unlink()
         return pd.DataFrame()
 
 # Files dictionary with cache filenames and chunk sizes
