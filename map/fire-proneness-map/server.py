@@ -18,6 +18,15 @@ import subprocess
 import shutil
 import sys
 
+# Constants
+TILE_SIZE = 1.0 / 69
+LAT_ORIGIN = 39.2
+LNG_ORIGIN = -122.6
+BUTTE_BOUNDS = [
+    [39.2, -122.6],
+    [39.9, -121.2],
+]
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -41,14 +50,6 @@ CORS(app, resources={
 CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 logger.info(f"Cache directory created at {CACHE_DIR}")
-
-TILE_SIZE = 1.0 / 69
-LAT_ORIGIN = 39.2
-LNG_ORIGIN = -122.6
-BUTTE_BOUNDS = [
-    [39.2, -122.6],
-    [39.9, -121.2],
-]
 
 # Data file configurations
 DATA_FILES = {
@@ -86,6 +87,30 @@ files = {
         "chunk_size": 1000  # Smaller chunks for small file
     }
 }
+
+def generate_grid(bounds, tile_size=TILE_SIZE):
+    """Generate a grid of tiles for the given bounds"""
+    south_west, north_east = bounds
+    grid = []
+    for lat in np.arange(south_west[0], north_east[0], tile_size):
+        for lng in np.arange(south_west[1], north_east[1], tile_size):
+            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
+    return grid
+
+def parse_grid_id(gid):
+    """Parse grid ID string into y, x coordinates"""
+    y, x = gid.split("_")
+    return int(y), int(x)
+
+def get_grid_id_from_bounds(bounds):
+    """Get grid ID from bounds"""
+    lat_center = (bounds[0][0] + bounds[1][0]) / 2
+    lng_center = (bounds[0][1] + bounds[1][1]) / 2
+    
+    y = int((lat_center - LAT_ORIGIN) / TILE_SIZE)
+    x = int((lng_center - LNG_ORIGIN) / TILE_SIZE)
+    
+    return f"{y}_{x}"
 
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
@@ -212,16 +237,6 @@ def ensure_data_files():
         else:
             logger.info(f"{filename} found locally")
     return True
-
-def get_grid_id_from_bounds(bounds):
-    """Get grid ID from bounds"""
-    lat_center = (bounds[0][0] + bounds[1][0]) / 2
-    lng_center = (bounds[0][1] + bounds[1][1]) / 2
-    
-    y = int((lat_center - LAT_ORIGIN) / TILE_SIZE)
-    x = int((lng_center - LNG_ORIGIN) / TILE_SIZE)
-    
-    return f"{y}_{x}"
 
 def load_and_cache_data(filename, chunk_size=10000):
     """Load data from local file and cache it using chunks"""
@@ -587,7 +602,6 @@ def predict_all():
 
     return jsonify({"predictions": results}), 200
 
-
 @app.route("/api/get-features", methods=["POST", "OPTIONS"])
 def get_features():
     if request.method == "OPTIONS":
@@ -615,20 +629,6 @@ def add_cors_headers(response):
     response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     return response
-
-def generate_grid(bounds, tile_size=1.0 / 69):
-    """Generate a grid of tiles for the given bounds"""
-    south_west, north_east = bounds
-    grid = []
-    for lat in np.arange(south_west[0], north_east[0], tile_size):
-        for lng in np.arange(south_west[1], north_east[1], tile_size):
-            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
-    return grid
-
-def parse_grid_id(gid):
-    """Parse grid ID string into y, x coordinates"""
-    y, x = gid.split("_")
-    return int(y), int(x)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port)
