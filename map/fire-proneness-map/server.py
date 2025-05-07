@@ -71,13 +71,9 @@ def download_from_drive(file_id, output):
         url = f"https://drive.google.com/uc?id={file_id}"
         gdown.download(url, output, quiet=False)
         logger.info("Download completed successfully")
-        
-        # Clean up any temporary files
-        cleanup_temp_files()
         return True
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
-        cleanup_temp_files()
         return False
 
 def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
