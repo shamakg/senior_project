@@ -3,6 +3,7 @@ from flask_cors import CORS, cross_origin
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import PowerTransformer, MinMaxScaler
+import os
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
@@ -13,7 +14,7 @@ LNG_ORIGIN = -122.6
 BUTTE_BOUNDS = [
     [39.2, -122.6],
     [39.9, -121.2],
-]
+]   
 
 
 
@@ -255,4 +256,5 @@ def add_cors_headers(response):
     return response
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Uses the PORT from environment or defaults to 5000
+    app.run(host="0.0.0.0", port=port, debug=True) 
