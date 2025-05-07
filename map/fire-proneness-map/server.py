@@ -74,6 +74,19 @@ predictions_by_week = {}
 available_weeks = []
 full_feature_map = {}
 
+# Files dictionary with filenames and chunk sizes
+files = {
+    "predictions_v2.csv": {
+        "chunk_size": 50000  # Smaller chunks for large file
+    },
+    "final_data.csv": {
+        "chunk_size": 50000  # Smaller chunks for large file
+    },
+    "fire_data.csv": {
+        "chunk_size": 100000  # Larger chunks for small file
+    }
+}
+
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
     try:
@@ -428,19 +441,6 @@ if not load_all_datasets():
     logger.error("Failed to load one or more datasets")
     raise Exception("Failed to load one or more datasets")
 logger.info("Datasets loaded successfully")
-
-# Files dictionary with filenames and chunk sizes
-files = {
-    "predictions_v2.csv": {
-        "chunk_size": 50000  # Smaller chunks for large file
-    },
-    "final_data.csv": {
-        "chunk_size": 50000  # Smaller chunks for large file
-    },
-    "fire_data.csv": {
-        "chunk_size": 100000  # Larger chunks for small file
-    }
-}
 
 @app.route("/", methods=["GET"])
 def home():
