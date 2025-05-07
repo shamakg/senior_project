@@ -64,20 +64,48 @@ def cleanup_temp_files():
     except Exception as e:
         logger.error(f"Error cleaning up temporary files: {e}")
 
-def download_from_drive(file_id, output):
+def test_file_access(file_id):
+    """Test if a file is accessible via direct URL"""
+    url = f"https://drive.google.com/uc?id={file_id}"
+    try:
+        response = requests.head(url, allow_redirects=True)
+        logger.info(f"File access test for {file_id}:")
+        logger.info(f"Status code: {response.status_code}")
+        logger.info(f"Final URL: {response.url}")
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error testing file access: {e}")
+        return False
+
+def download_from_drive(file_id, output_path):
     """Download file from Google Drive with better error handling"""
     try:
-        # Use gdown with direct download URL
-        url = f"https://drive.google.com/uc?id={file_id}"
-        logger.info(f"Downloading from: {url}")
-        success = gdown.download(url, output, quiet=False)
+        # First test if file is accessible
+        if not test_file_access(file_id):
+            logger.error(f"File {file_id} is not accessible")
+            return False
+
+        # Try direct download with confirm token (bypass virus scan)
+        url = f"https://drive.google.com/uc?id={file_id}&confirm=t"
+        logger.info(f"Attempting download with confirm token from: {url}")
+        
+        # Download with gdown
+        success = gdown.download(url, str(output_path), quiet=False)
         
         if not success:
             logger.error("Download failed")
             return False
+        
+        # Verify the downloaded content is not HTML
+        with open(output_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read(1024)
+            if '<!DOCTYPE html>' in content or '<html>' in content:
+                logger.error("Downloaded content is HTML instead of data")
+                return False
             
         logger.info("Download completed successfully")
         return True
+            
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
         return False
@@ -92,25 +120,42 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
         try:
             logger.info(f"Loading from cache: {cache_filename}")
             df = pd.read_parquet(cache_path, engine='pyarrow')
-            logger.info(f"Successfully loaded {cache_filename} from cache")
-            return df
+            # Verify the data is valid
+            if df.empty or len(df.columns) < 2:  # Basic validation
+                logger.error(f"Invalid data in cache for {cache_filename}")
+                if cache_path.exists():
+                    cache_path.unlink()
+            else:
+                logger.info(f"Successfully loaded {cache_filename} from cache")
+                logger.info(f"Cache file columns: {df.columns.tolist()}")
+                return df
         except Exception as e:
             logger.error(f"Error reading cache {cache_filename}: {e}")
+            if cache_path.exists():
+                cache_path.unlink()
     
     # If not cached or cache invalid, download from Google Drive
     logger.info(f"Downloading {cache_filename} from Google Drive...")
     
     try:
         # Download to a temporary CSV file first
-        with open(temp_csv_path, 'wb') as f:
-            if not download_from_drive(file_id, f):
-                logger.error(f"Failed to download {cache_filename}")
-                return pd.DataFrame()
+        if not download_from_drive(file_id, temp_csv_path):
+            logger.error(f"Failed to download {cache_filename}")
+            return pd.DataFrame()
         
         # Read and process in chunks
         logger.info(f"Processing {cache_filename} in chunks...")
         chunks = []
         for chunk in pd.read_csv(temp_csv_path, chunksize=chunk_size):
+            # Validate chunk has data
+            if chunk.empty:
+                logger.warning(f"Empty chunk found in {cache_filename}")
+                continue
+                
+            # Log chunk info for debugging
+            logger.info(f"Processing chunk with columns: {chunk.columns.tolist()}")
+            logger.info(f"Chunk shape: {chunk.shape}")
+            
             chunks.append(chunk)
             del chunk
         
@@ -121,6 +166,14 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
         # Combine chunks
         df = pd.concat(chunks, ignore_index=True)
         del chunks  # Clear memory
+        
+        # Validate final dataframe
+        if df.empty:
+            logger.error(f"Final dataframe is empty for {cache_filename}")
+            return pd.DataFrame()
+            
+        logger.info(f"Final dataframe columns: {df.columns.tolist()}")
+        logger.info(f"Final dataframe shape: {df.shape}")
         
         # Cache the data as parquet
         logger.info(f"Caching {cache_filename}...")
@@ -167,6 +220,22 @@ all_predictions_df = load_and_cache_data(
     files["all_predictions_5years_v2.csv"]["cache"],
     files["all_predictions_5years_v2.csv"]["chunk_size"]
 )
+
+# Validate predictions dataframe
+if not all_predictions_df.empty:
+    logger.info("Validating predictions dataframe...")
+    logger.info(f"Columns: {all_predictions_df.columns.tolist()}")
+    logger.info(f"Shape: {all_predictions_df.shape}")
+    
+    # Check for required columns
+    required_columns = ['grid_id', 'week_start', 'raw_prob']
+    missing_columns = [col for col in required_columns if col not in all_predictions_df.columns]
+    if missing_columns:
+        logger.error(f"Missing required columns in predictions: {missing_columns}")
+        all_predictions_df = pd.DataFrame()  # Reset to empty if missing required columns
+    else:
+        logger.info("All required columns present in predictions")
+
 full = load_and_cache_data(
     files["final_data.csv"]["id"],
     files["final_data.csv"]["cache"],
@@ -180,35 +249,38 @@ full_2 = load_and_cache_data(
 
 # Verify data loading
 if all_predictions_df.empty or full.empty or full_2.empty:
-    logger.warning("One or more datasets failed to load properly")
-    logger.warning("Please ensure all Google Drive files are publicly accessible")
+    logger.error("One or more datasets failed to load properly")
+    logger.error("Please ensure all Google Drive files are publicly accessible")
+    raise Exception("Failed to load required datasets")
 else:
     logger.info("All datasets loaded successfully")
 
-all_predictions_df["scaled"] = all_predictions_df["raw_prob"]*50
+# Process predictions only if we have valid data
+if not all_predictions_df.empty:
+    all_predictions_df["scaled"] = all_predictions_df["raw_prob"]*50
 
+    # Extract the column as a 2D array (needed for sklearn)
+    X = all_predictions_df[["scaled"]].values
 
-# Extract the column as a 2D array (needed for sklearn)
-X = all_predictions_df[["scaled"]].values
+    # Option 1: Yeo-Johnson (can handle zeros and negatives)
+    pt = PowerTransformer(method='yeo-johnson')
+    X_transformed = pt.fit_transform(X)
 
-# Option 1: Yeo-Johnson (can handle zeros and negatives)
-pt = PowerTransformer(method='yeo-johnson')
-X_transformed = pt.fit_transform(X)
+    scaler = MinMaxScaler()
+    X_scaled = scaler.fit_transform(X_transformed)
 
-scaler = MinMaxScaler()
-X_scaled = scaler.fit_transform(X_transformed)
+    all_predictions_df["scaled"] = X_scaled
+    # all_predictions_df["scaled"] = all_predictions_df["scaled"] ** 0.5
 
-all_predictions_df["scaled"] = X_scaled
-# all_predictions_df["scaled"] = all_predictions_df["scaled"] ** 0.5
+    # import numpy as np
 
-# import numpy as np
+    # Apply log transform to reduce the impact of large outliers
+    # all_predictions_df["scaled"] = np.log1p(all_predictions_df["scaled"])
 
-# Apply log transform to reduce the impact of large outliers
-# all_predictions_df["scaled"] = np.log1p(all_predictions_df["scaled"])
+    # min_val = all_predictions_df["scaled"].min()
+    # max_val = all_predictions_df["scaled"].max()
+    # all_predictions_df["scaled"] = ((all_predictions_df["scaled"] - min_val) / (max_val - min_val) )**0.3
 
-# min_val = all_predictions_df["scaled"].min()
-# max_val = all_predictions_df["scaled"].max()
-# all_predictions_df["scaled"] = ((all_predictions_df["scaled"] - min_val) / (max_val - min_val) )**0.3
 predictions_by_week = {
     week: group.set_index("grid_id")["scaled"].to_dict()
     for week, group in all_predictions_df.groupby("week_start")
