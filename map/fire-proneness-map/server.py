@@ -162,12 +162,22 @@ class DataManager:
         self.clear_old_cache()
         
         try:
-            df = pd.read_parquet(CACHE_DIR / "final_data.csv.parquet")
-            features = df[df["grid_id"] == grid_id].iloc[-1].to_dict()
+            # Read only the specific grid_id to minimize memory usage
+            df = pd.read_parquet(
+                CACHE_DIR / "final_data.csv.parquet",
+                filters=[('grid_id', '==', grid_id)]
+            )
+            
+            if df.empty:
+                logger.warning(f"No features found for grid_id: {grid_id}")
+                return None
+                
+            features = df.iloc[-1].to_dict()
             self._features_cache[grid_id] = features
             return features
         except Exception as e:
-            logger.error(f"Error loading features for grid {grid_id}: {e}")
+            logger.error(f"Error loading features for grid {grid_id}: {str(e)}")
+            logger.error(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
             return None
 
     def get_fire_weeks(self):
