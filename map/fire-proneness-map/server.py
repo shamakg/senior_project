@@ -78,49 +78,46 @@ def test_file_access(file_id):
         return False
 
 def download_from_drive(file_id, output_path):
-    """Download file from Google Drive using gdown's direct method"""
+    """Download file from Google Drive using gdown with better error handling"""
     try:
         # Convert Path to string for gdown
         output_str = str(output_path)
         
-        # Use gdown's direct download method
+        # Use direct download URL
         url = f"https://drive.google.com/uc?id={file_id}"
         logger.info(f"Downloading from: {url}")
         
-        # Try direct download first
-        try:
-            gdown.download(url, output_str, quiet=False)
-            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-                logger.info("Download completed successfully")
-                return True
-        except Exception as e:
-            logger.warning(f"Direct download failed, trying with fuzzy: {str(e)}")
+        # First check if file is accessible
+        response = requests.head(url, allow_redirects=True)
+        logger.info(f"Initial response status: {response.status_code}")
+        logger.info(f"Final URL after redirects: {response.url}")
         
-        # If direct download fails, try with fuzzy=True
+        # Use gdown with cookies and fuzzy download
         try:
-            gdown.download(url, output_str, fuzzy=True, quiet=False)
+            gdown.download(url, output_str, quiet=False, fuzzy=True, use_cookies=True)
+            
+            # Verify download
             if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-                logger.info("Download completed successfully with fuzzy=True")
+                logger.info(f"Download completed successfully. File size: {os.path.getsize(output_str)} bytes")
+                
+                # Verify file content is not HTML
+                with open(output_str, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read(1024)
+                    if '<!DOCTYPE html>' in content or '<html>' in content:
+                        logger.error("Downloaded content is HTML instead of data")
+                        return False
+                
                 return True
+            else:
+                logger.error("Download failed - file is empty or doesn't exist")
+                return False
+                
         except Exception as e:
-            logger.error(f"Fuzzy download failed: {str(e)}")
-        
-        # If both methods fail, try one last time with the file view URL
-        try:
-            view_url = f"https://drive.google.com/file/d/{file_id}/view"
-            logger.info(f"Trying view URL: {view_url}")
-            gdown.download(view_url, output_str, fuzzy=True, quiet=False)
-            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-                logger.info("Download completed successfully with view URL")
-                return True
-        except Exception as e:
-            logger.error(f"View URL download failed: {str(e)}")
-        
-        logger.error("All download methods failed")
-        return False
+            logger.error(f"Download error: {str(e)}")
+            return False
             
     except Exception as e:
-        logger.error(f"Download error: {str(e)}")
+        logger.error(f"Error in download_from_drive: {str(e)}")
         return False
 
 def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
