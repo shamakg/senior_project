@@ -13,6 +13,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 from urllib.parse import urlparse, parse_qs
+import tempfile
+import subprocess
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,30 +37,50 @@ CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 logger.info(f"Cache directory created at {CACHE_DIR}")
 
-def get_file_id_from_url(url):
-    """Extract file ID from Google Drive URL"""
-    parsed = urlparse(url)
-    if parsed.netloc == 'drive.google.com':
-        if '/file/d/' in url:
-            return url.split('/file/d/')[1].split('/')[0]
-        elif 'id=' in url:
-            return parse_qs(parsed.query)['id'][0]
-    return url  # If it's already a file ID
+def get_direct_download_url(file_id):
+    """Get a direct download URL for a Google Drive file"""
+    try:
+        # First try to get the file info
+        url = f"https://drive.google.com/file/d/{file_id}/view"
+        response = requests.get(url)
+        if response.status_code != 200:
+            raise Exception(f"Failed to get file info: {response.status_code}")
+        
+        # Extract the download URL
+        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        return download_url
+    except Exception as e:
+        logger.error(f"Error getting direct download URL: {e}")
+        return None
+
+def cleanup_temp_files():
+    """Clean up any temporary files created by gdown"""
+    try:
+        # Clean up gdown's temporary directory if it exists
+        gdown_tmp = Path('/tmp/gdown')
+        if gdown_tmp.exists():
+            shutil.rmtree(gdown_tmp)
+            logger.info("Cleaned up gdown temporary files")
+    except Exception as e:
+        logger.error(f"Error cleaning up temporary files: {e}")
 
 def download_from_drive(file_id, output):
     """Download file from Google Drive with better error handling"""
     try:
+        # Use gdown with direct download URL
         url = f"https://drive.google.com/uc?id={file_id}"
-        response = gdown.download(url, output, quiet=False, fuzzy=True)
-        if response is not None:
-            logger.info("Download successful!")
-            return True
-        raise Exception("Download failed - no response")
+        gdown.download(url, output, quiet=False)
+        logger.info("Download completed successfully")
+        
+        # Clean up any temporary files
+        cleanup_temp_files()
+        return True
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
+        cleanup_temp_files()
         return False
 
-def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
+def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
     """Load data from Google Drive and cache it locally using chunks"""
     cache_path = CACHE_DIR / cache_filename
     
@@ -66,9 +89,16 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
         try:
             logger.info(f"Loading from cache: {cache_filename}")
             if cache_filename.endswith('.parquet'):
-                return pd.read_parquet(cache_path)
+                # Read parquet in chunks to save memory
+                df = pd.read_parquet(cache_path, engine='pyarrow')
+                logger.info(f"Successfully loaded {cache_filename} from cache")
+                return df
             else:
-                return pd.read_csv(cache_path)
+                # Read CSV in chunks to save memory
+                df = pd.read_csv(cache_path, chunksize=chunk_size)
+                df = pd.concat(df)  # Combine chunks
+                logger.info(f"Successfully loaded {cache_filename} from cache")
+                return df
         except Exception as e:
             logger.error(f"Error reading cache {cache_filename}: {e}")
     
@@ -93,6 +123,10 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
             # Clear memory
             del chunk
         
+        # Clear the output buffer
+        output.close()
+        del output
+        
         if not chunks:
             logger.error(f"No data found in {cache_filename}")
             return pd.DataFrame()
@@ -104,7 +138,10 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
         # Cache the data as parquet (more efficient than pickle)
         logger.info(f"Caching {cache_filename}...")
         parquet_path = cache_path.with_suffix('.parquet')
-        df.to_parquet(parquet_path, compression='gzip')
+        
+        # Write parquet in chunks to save memory
+        table = pa.Table.from_pandas(df)
+        pq.write_table(table, parquet_path, compression='gzip')
         
         logger.info(f"Successfully cached {cache_filename}")
         return df
@@ -115,37 +152,52 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
             try:
                 logger.info(f"Attempting to use existing cache for {cache_filename}")
                 if cache_filename.endswith('.parquet'):
-                    return pd.read_parquet(cache_path)
-                return pd.read_csv(cache_path)
+                    df = pd.read_parquet(cache_path, engine='pyarrow')
+                    return df
+                df = pd.read_csv(cache_path, chunksize=chunk_size)
+                df = pd.concat(df)
+                return df
             except Exception as cache_error:
                 logger.error(f"Failed to use cache for {cache_filename}: {cache_error}")
                 return pd.DataFrame()  # Return empty DataFrame as last resort
         return pd.DataFrame()
 
-# Files dictionary with cache filenames
+# Files dictionary with cache filenames and chunk sizes
 files = {
     "all_predictions_5years_v2.csv": {
         "id": "1x1jI_OUq7Jl5T3HBIiiHDUZIMI6OLcIV",
-        "cache": "predictions_v2.parquet"
+        "cache": "predictions_v2.parquet",
+        "chunk_size": 50000  # Smaller chunks for large file
     },
     "final_data.csv": {
         "id": "1rQ5QlFXgENzlNPit_ds8RtjegM_YLHU4",
-        "cache": "final_data.parquet"
+        "cache": "final_data.parquet",
+        "chunk_size": 50000  # Smaller chunks for large file
     },
     "fire_data.csv": {
         "id": "1DSTFM2imMKe1iqnANoRkmLQbuMEEcSxm",
-        "cache": "fire_data.parquet"
+        "cache": "fire_data.parquet",
+        "chunk_size": 100000  # Larger chunks for small file
     }
 }
 
 # Load data with caching
 logger.info("Starting data loading process...")
-all_predictions_df = load_and_cache_data(files["all_predictions_5years_v2.csv"]["id"], 
-                                       files["all_predictions_5years_v2.csv"]["cache"])
-full = load_and_cache_data(files["final_data.csv"]["id"], 
-                          files["final_data.csv"]["cache"])
-full_2 = load_and_cache_data(files["fire_data.csv"]["id"], 
-                            files["fire_data.csv"]["cache"])
+all_predictions_df = load_and_cache_data(
+    files["all_predictions_5years_v2.csv"]["id"],
+    files["all_predictions_5years_v2.csv"]["cache"],
+    files["all_predictions_5years_v2.csv"]["chunk_size"]
+)
+full = load_and_cache_data(
+    files["final_data.csv"]["id"],
+    files["final_data.csv"]["cache"],
+    files["final_data.csv"]["chunk_size"]
+)
+full_2 = load_and_cache_data(
+    files["fire_data.csv"]["id"],
+    files["fire_data.csv"]["cache"],
+    files["fire_data.csv"]["chunk_size"]
+)
 
 # Verify data loading
 if all_predictions_df.empty or full.empty or full_2.empty:
