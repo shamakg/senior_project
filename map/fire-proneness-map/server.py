@@ -155,12 +155,12 @@ def load_and_cache_data(filename, chunk_size=10000):
     writer = None       
     """Load data from local file and cache it using chunks"""
     cache_path = CACHE_DIR / f"{filename}.parquet"
-    temp_csv_path = CACHE_DIR / f"temp_{filename}.csv"
+    # temp_csv_path = CACHE_DIR / f"temp_{filename}.csv"
     
     # If cached file exists and is not empty, load it
     if cache_path.exists() and cache_path.stat().st_size > 0:
         try:
-            logger.info(f"Loading from cache: {filename}")
+            logger.info(f"Loading from cache: {filename}")  
             # Read parquet file in chunks
             df = pd.read_parquet(cache_path, engine='pyarrow')
             # Verify the data is valid
@@ -183,7 +183,7 @@ def load_and_cache_data(filename, chunk_size=10000):
     try:
         # Read and process in chunks
         logger.info(f"Processing {filename} in chunks...")
-        chunks = []
+        # chunks = []
         total_rows = 0
         
         for chunk in pd.read_csv(filename, chunksize=chunk_size):
@@ -196,48 +196,57 @@ def load_and_cache_data(filename, chunk_size=10000):
             logger.info(f"Processing chunk with columns: {chunk.columns.tolist()}")
             logger.info(f"Chunk shape: {chunk.shape}")
             
-            chunks.append(chunk)
+            table = pa.Table.from_pandas(chunk)
+
+            if writer is None:
+                writer = ParquetWriter(str(cache_path), table.schema, compression='gzip')
+
+            writer.write_table(table)
             total_rows += len(chunk)
             
             # If we've processed too many rows, write to parquet and clear memory
-            if total_rows >= 100000:
-                logger.info(f"Writing intermediate data to parquet...")
-                temp_df = pd.concat(chunks, ignore_index=True)
-                table = pa.Table.from_pandas(temp_df)
+            # if total_rows >= 100000:
+            #     logger.info(f"Writing intermediate data to parquet...")
+            #     temp_df = pd.concat(chunks, ignore_index=True)
+            #     table = pa.Table.from_pandas(temp_df)
 
-                if writer is None:
-                    writer = ParquetWriter(str(cache_path), table.schema, compression='gzip')
+            #     if writer is None:
+            #         writer = ParquetWriter(str(cache_path), table.schema, compression='gzip')
 
-                writer.write_table(table)
-                chunks = []
-                total_rows = 0
-                del temp_df
-                import gc
-                gc.collect()
+            #     writer.write_table(table)
+            #     chunks = []
+            #     total_rows = 0
+            #     del temp_df
+            #     import gc
+            #     gc.collect()
         
-        if not chunks:
+        # if not chunks:
+        #     logger.error(f"No data found in {filename}")
+        #     return pd.DataFrame()
+        
+        # # Combine remaining chunks
+        # if chunks:
+        #     logger.info("Writing remaining data to parquet...")
+        #     df = pd.concat(chunks, ignore_index=True)
+        #     table = pa.Table.from_pandas(df)
+        #     if writer is None:
+        #         writer = ParquetWriter(str(cache_path), table.schema, compression='gzip')
+        #     writer.write_table(table)
+        #     del chunks
+        # else:
+        #     df = pd.DataFrame()
+
+        if total_rows == 0:
             logger.error(f"No data found in {filename}")
             return pd.DataFrame()
-        
-        # Combine remaining chunks
-        if chunks:
-            logger.info("Writing remaining data to parquet...")
-            df = pd.concat(chunks, ignore_index=True)
-            table = pa.Table.from_pandas(df)
-            if writer is None:
-                writer = ParquetWriter(str(cache_path), table.schema, compression='gzip')
-            writer.write_table(table)
-            del chunks
-        else:
-            df = pd.DataFrame()
 
         if writer:
             writer.close()
         
-        df = pd.read_parquet(cache_path)
-        logger.info(f"Successfully cached {filename}")
-        logger.info(f"Final dataframe shape: {df.shape}")
-        return df
+        
+        logger.info(f"Successfully cached {filename} with {total_rows} rows")
+
+        return pd.read_parquet(cache_path)
         
     except Exception as e:
         logger.error(f"Error processing {filename}: {e}")
