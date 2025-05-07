@@ -16,6 +16,7 @@ from urllib.parse import urlparse, parse_qs
 import tempfile
 import subprocess
 import shutil
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +60,14 @@ DATA_FILES = {
         "chunk_size": 100000
     }
 }
+
+# Global variables to store processed data
+all_predictions_df = None
+full = None
+full_2 = None
+predictions_by_week = {}
+available_weeks = []
+full_feature_map = {}
 
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
@@ -266,144 +275,119 @@ files = {
     }
 }
 
-# Load data with caching
-logger.info("Starting data loading process...")
-all_predictions_df = load_and_cache_data(
-    "predictions_v2.csv",
-    files["predictions_v2.csv"]["chunk_size"]
-)
-
-# Validate predictions dataframe
-if not all_predictions_df.empty:
-    logger.info("Validating predictions dataframe...")
-    logger.info(f"Columns: {all_predictions_df.columns.tolist()}")
-    logger.info(f"Shape: {all_predictions_df.shape}")
+def process_predictions(df):
+    """Process predictions dataframe and return processed data"""
+    if df.empty:
+        return None, None, None
+        
+    df["scaled"] = df["raw_prob"] * 50
     
-    # Check for required columns
-    required_columns = ['grid_id', 'week_start', 'raw_prob']
-    missing_columns = [col for col in required_columns if col not in all_predictions_df.columns]
-    if missing_columns:
-        logger.error(f"Missing required columns in predictions: {missing_columns}")
-        all_predictions_df = pd.DataFrame()  # Reset to empty if missing required columns
-    else:
-        logger.info("All required columns present in predictions")
-
-full = load_and_cache_data(
-    "final_data.csv",
-    files["final_data.csv"]["chunk_size"]
-)
-full_2 = load_and_cache_data(
-    "fire_data.csv",
-    files["fire_data.csv"]["chunk_size"]
-)
-
-# Verify data loading
-if all_predictions_df.empty or full.empty or full_2.empty:
-    logger.error("One or more datasets failed to load properly")
-    logger.error("Please ensure all Google Drive files are publicly accessible")
-    raise Exception("Failed to load required datasets")
-else:
-    logger.info("All datasets loaded successfully")
-
-# Process predictions only if we have valid data
-if not all_predictions_df.empty:
-    all_predictions_df["scaled"] = all_predictions_df["raw_prob"]*50
-
     # Extract the column as a 2D array (needed for sklearn)
-    X = all_predictions_df[["scaled"]].values
-
-    # Option 1: Yeo-Johnson (can handle zeros and negatives)
+    X = df[["scaled"]].values
+    
+    # Apply Yeo-Johnson transformation
     pt = PowerTransformer(method='yeo-johnson')
     X_transformed = pt.fit_transform(X)
-
+    
+    # Scale to 0-1 range
     scaler = MinMaxScaler()
     X_scaled = scaler.fit_transform(X_transformed)
+    
+    df["scaled"] = X_scaled
+    
+    # Create predictions by week
+    predictions = {
+        week: group.set_index("grid_id")["scaled"].to_dict()
+        for week, group in df.groupby("week_start")
+    }
+    
+    # Get available weeks
+    weeks = sorted(predictions.keys())
+    
+    # Perform spatial imputation for each week
+    for week, week_map in predictions.items():
+        # Build a set of all ids we expect from the full grid
+        full_ids = { get_grid_id_from_bounds(b) for b in generate_grid(BUTTE_BOUNDS) }
+        # Find the "suspicious" missing ones
+        missing_ids = full_ids - set(week_map.keys())
 
-    all_predictions_df["scaled"] = X_scaled
-    # all_predictions_df["scaled"] = all_predictions_df["scaled"] ** 0.5
+        for gid in missing_ids:
+            y, x = parse_grid_id(gid)
 
-    # import numpy as np
+            above_id = f"{y-1}_{x}"
+            below_id = f"{y+1}_{x}"
 
-    # Apply log transform to reduce the impact of large outliers
-    # all_predictions_df["scaled"] = np.log1p(all_predictions_df["scaled"])
+            above_val = week_map.get(above_id)
+            below_val = week_map.get(below_id)
 
-    # min_val = all_predictions_df["scaled"].min()
-    # max_val = all_predictions_df["scaled"].max()
-    # all_predictions_df["scaled"] = ((all_predictions_df["scaled"] - min_val) / (max_val - min_val) )**0.3
+            if above_val is not None and below_val is not None:
+                week_map[gid] = (above_val + below_val) / 2
+            elif above_val is not None:
+                week_map[gid] = above_val
+            elif below_val is not None:
+                week_map[gid] = below_val
+    
+    return df, predictions, weeks
 
-predictions_by_week = {
-    week: group.set_index("grid_id")["scaled"].to_dict()
-    for week, group in all_predictions_df.groupby("week_start")
-}
-available_weeks = sorted(predictions_by_week.keys())  # for frontend use
+def process_features(df):
+    """Process features dataframe and return feature map"""
+    if df.empty:
+        return None
+        
+    # Sort and deduplicate
+    df = df.sort_values("week_start").drop_duplicates("grid_id", keep="last")
+    
+    # Create feature map
+    feature_map = (
+        df.set_index("grid_id")
+        .drop(columns=["week_start", "fire_occurred"], errors="ignore")
+        .to_dict(orient="index")
+    )
+    
+    return feature_map
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 1) After you build predictions_by_week, perform spatial imputation
-# ──────────────────────────────────────────────────────────────────────────────
-
-def generate_grid(bounds, tile_size=1.0 / 69):
-    south_west, north_east = bounds
-    grid = []
-    for lat in np.arange(south_west[0], north_east[0], tile_size):
-        for lng in np.arange(south_west[1], north_east[1], tile_size):
-            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
-    return grid
-
-
-def get_grid_id_from_bounds(bounds):
-    lat_center = (bounds[0][0] + bounds[1][0]) / 2
-    lng_center = (bounds[0][1] + bounds[1][1]) / 2
-    y_index = int((lat_center - LAT_ORIGIN) / TILE_SIZE)
-    x_index = int((lng_center - LNG_ORIGIN) / TILE_SIZE)
-    return f"{y_index}_{x_index}"
-
-# helper to parse "y_x" → (y:int, x:int)
-def parse_grid_id(gid):
-    y, x = gid.split("_")
-    return int(y), int(x)
-
-# for each week, fill any missing grid_id by neighbor mean
-for week, week_map in predictions_by_week.items():
-    # build a set of all ids we expect from the full grid
-    full_ids = { get_grid_id_from_bounds(b) for b in generate_grid(BUTTE_BOUNDS) }
-    # find the "suspicious" missing ones
-    missing_ids = full_ids - set(week_map.keys())
-
-    for gid in missing_ids:
-        y, x = parse_grid_id(gid)
-
-        above_id = f"{y-1}_{x}"
-        below_id = f"{y+1}_{x}"
-
-        above_val = week_map.get(above_id)
-        below_val = week_map.get(below_id)
-
-        if above_val is not None and below_val is not None:
-            week_map[gid] = (above_val + below_val) / 2
-        elif above_val is not None:
-            week_map[gid] = above_val
-        elif below_val is not None:
-            week_map[gid] = below_val
-        # else: skip – no vertical neighbors
-
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-
-# full = pd.read_csv("final_data.csv", index_col=0) 
-full = (
-    full.sort_values("week_start")  # or another column that tells which to keep
-    .drop_duplicates("grid_id", keep="last")
-)
-full_feature_map = (
-    full
-    .set_index("grid_id")
-    .drop(columns=["week_start", "fire_occurred"], errors="ignore")
-    .to_dict(orient="index")
-)
-
-
+def load_all_datasets():
+    """Load and validate all datasets."""
+    global all_predictions_df, full, full_2, predictions_by_week, available_weeks, full_feature_map
+    
+    logging.info("Starting data loading process...")
+    
+    # Load predictions data
+    predictions_df = load_and_cache_data("predictions_v2.csv", files["predictions_v2.csv"]["chunk_size"])
+    if predictions_df is None or predictions_df.empty:
+        logging.error("Failed to load predictions data")
+        return False
+    
+    # Load features data
+    features_df = load_and_cache_data("final_data.csv", files["final_data.csv"]["chunk_size"])
+    if features_df is None or features_df.empty:
+        logging.error("Failed to load features data")
+        return False
+    
+    # Load fire data
+    fire_df = load_and_cache_data("fire_data.csv", files["fire_data.csv"]["chunk_size"])
+    if fire_df is None or fire_df.empty:
+        logging.error("Failed to load fire data")
+        return False
+    
+    # Process predictions
+    all_predictions_df, predictions_by_week, available_weeks = process_predictions(predictions_df)
+    if all_predictions_df is None:
+        logging.error("Failed to process predictions")
+        return False
+    
+    # Process features
+    full = features_df
+    full_feature_map = process_features(features_df)
+    if full_feature_map is None:
+        logging.error("Failed to process features")
+        return False
+    
+    # Store fire data
+    full_2 = fire_df
+    
+    logging.info("All datasets loaded and processed successfully")
+    return True
 
 @app.route("/", methods=["GET"])
 def home():
@@ -543,16 +527,33 @@ def add_cors_headers(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     return response
 
+def generate_grid(bounds, tile_size=1.0 / 69):
+    """Generate a grid of tiles for the given bounds"""
+    south_west, north_east = bounds
+    grid = []
+    for lat in np.arange(south_west[0], north_east[0], tile_size):
+        for lng in np.arange(south_west[1], north_east[1], tile_size):
+            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
+    return grid
+
+def parse_grid_id(gid):
+    """Parse grid ID string into y, x coordinates"""
+    y, x = gid.split("_")
+    return int(y), int(x)
+
 if __name__ == "__main__":
-    # Ensure all data files exist before starting the server
-    ensure_data_files()
-    
-    # Load data with caching
-    logger.info("Starting data loading process...")
-    all_predictions_df = load_and_cache_data(
-        "predictions_v2.csv",
-        DATA_FILES["predictions_v2.csv"]["chunk_size"]
-    )
-    
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
+    # Ensure all data files exist before starting
+    if not ensure_data_files():
+        logging.error("Failed to download required data files from GitHub Releases")
+        logging.error("Please check that the files exist in the latest release")
+        sys.exit(1)
+
+    # Load and validate all datasets
+    if not load_all_datasets():
+        logging.error("Failed to load one or more datasets")
+        logging.error("Please check the data files and try again")
+        sys.exit(1)
+
+    # Start the server
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host="0.0.0.0", port=port)
