@@ -11,6 +11,14 @@
 # production
 /build
 
+# Data files
+*.csv
+*.parquet
+/tmp/
+__pycache__/
+*.pyc
+.env
+
 /fire-proneness-map/final_data.csv
 /fire-proneness-map/all_predictions_5years_v2.csv
 /fire-proneness-map/all_predictions_5years.csv

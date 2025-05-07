@@ -22,7 +22,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"])
+# Update CORS configuration to allow requests from localhost:3000
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:3000"],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 TILE_SIZE = 1.0 / 69
 LAT_ORIGIN = 39.2
@@ -36,6 +43,22 @@ BUTTE_BOUNDS = [
 CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 logger.info(f"Cache directory created at {CACHE_DIR}")
+
+# Data file configurations
+DATA_FILES = {
+    "predictions_v2.csv": {
+        "url": "https://github.com/shamakg/senior_project/releases/download/v1.0.0/predictions_v2.csv",
+        "chunk_size": 50000
+    },
+    "final_data.csv": {
+        "url": "https://github.com/shamakg/senior_project/releases/download/v1.0.0/final_data.csv",
+        "chunk_size": 50000
+    },
+    "fire_data.csv": {
+        "url": "https://github.com/shamakg/senior_project/releases/download/v1.0.0/fire_data.csv",
+        "chunk_size": 100000
+    }
+}
 
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
@@ -78,117 +101,121 @@ def test_file_access(file_id):
         return False
 
 def download_from_drive(file_id, output_path):
-    """Download file from Google Drive using gdown with better error handling"""
+    """Download file from Google Drive using gdown with specific configuration"""
     try:
         # Convert Path to string for gdown
         output_str = str(output_path)
         
-        # Create a persistent session
-        session = requests.Session()
+        # Use the file view URL format which works better for public files
+        url = f"https://drive.google.com/file/d/{file_id}/view"
+        logger.info(f"Attempting download from: {url}")
         
-        # Try different URL formats
-        urls = [
-            f"https://drive.google.com/uc?id={file_id}",  # Standard format
-            f"https://drive.google.com/file/d/{file_id}/view",  # File view format
-            f"https://drive.google.com/uc?export=download&id={file_id}"  # Export format
-        ]
-        
-        for url in urls:
-            logger.info(f"Attempting download from: {url}")
+        try:
+            # Use gdown with specific configuration for public files
+            gdown.download(
+                url,
+                output_str,
+                quiet=False,
+                fuzzy=True,
+                use_cookies=True,
+                verify=True,
+                proxy=None,
+                speed=None,
+                no_check_certificate=False
+            )
             
-            # First check if file is accessible
-            try:
-                response = session.head(url, allow_redirects=True)
-                logger.info(f"Initial response status: {response.status_code}")
-                logger.info(f"Final URL after redirects: {response.url}")
+            # Verify download
+            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
+                # Verify file content is not HTML
+                with open(output_str, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read(1024)
+                    if '<!DOCTYPE html>' in content or '<html>' in content:
+                        logger.error("Downloaded content is HTML instead of data")
+                        if os.path.exists(output_str):
+                            os.remove(output_str)
+                        return False
                 
-                if response.status_code != 200:
-                    logger.warning(f"URL {url} returned status {response.status_code}")
-                    continue
-                    
-                # If we get a virus scan warning, try to get the confirm token
-                if 'confirm=' in response.url:
-                    confirm_token = response.url.split('confirm=')[1].split('&')[0]
-                    url = f"{url}&confirm={confirm_token}"
-                    logger.info(f"Using confirm token: {confirm_token}")
+                logger.info(f"Download completed successfully. File size: {os.path.getsize(output_str)} bytes")
+                return True
+            else:
+                logger.error("Download failed - file is empty or doesn't exist")
+                return False
                 
-            except Exception as e:
-                logger.warning(f"Error checking URL {url}: {e}")
-                continue
-            
-            # Try downloading with different gdown options
-            try:
-                # First attempt: Standard download with session
-                gdown.download(url, output_str, quiet=False, fuzzy=True, use_cookies=True)
-                
-                # Verify download
-                if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-                    # Verify file content is not HTML
-                    with open(output_str, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read(1024)
-                        if '<!DOCTYPE html>' in content or '<html>' in content:
-                            logger.warning("Downloaded content is HTML, trying next URL")
-                            if os.path.exists(output_str):
-                                os.remove(output_str)
-                            continue
-                    
-                    logger.info(f"Download completed successfully. File size: {os.path.getsize(output_str)} bytes")
-                    return True
-                
-            except Exception as e:
-                logger.warning(f"Download failed with URL {url}: {e}")
-                if os.path.exists(output_str):
-                    os.remove(output_str)
-                continue
-        
-        # If we get here, all download attempts failed
-        logger.error("All download attempts failed")
-        return False
+        except Exception as e:
+            logger.error(f"Download error: {str(e)}")
+            if os.path.exists(output_str):
+                os.remove(output_str)
+            return False
             
     except Exception as e:
         logger.error(f"Error in download_from_drive: {str(e)}")
         return False
 
-def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
-    """Load data from Google Drive and cache it locally using chunks"""
-    cache_path = CACHE_DIR / cache_filename
-    temp_csv_path = CACHE_DIR / f"temp_{cache_filename}.csv"
+def download_file(url, filename):
+    """Download a file from GitHub Releases"""
+    try:
+        logger.info(f"Downloading {filename}...")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 8192  # 8 KB chunks
+        
+        with open(filename, 'wb') as f:
+            for data in response.iter_content(block_size):
+                f.write(data)
+                
+        logger.info(f"Successfully downloaded {filename}")
+        return True
+    except Exception as e:
+        logger.error(f"Error downloading {filename}: {e}")
+        return False
+
+def ensure_data_files():
+    """Ensure all required data files exist, download if missing"""
+    for filename, config in DATA_FILES.items():
+        if not os.path.exists(filename):
+            logger.info(f"{filename} not found locally, downloading...")
+            if not download_file(config["url"], filename):
+                raise Exception(f"Failed to download required file: {filename}")
+        else:
+            logger.info(f"{filename} found locally")
+
+def load_and_cache_data(filename, chunk_size=50000):
+    """Load data from local file and cache it using chunks"""
+    cache_path = CACHE_DIR / f"{filename}.parquet"
+    temp_csv_path = CACHE_DIR / f"temp_{filename}.csv"
     
     # If cached file exists and is not empty, load it
     if cache_path.exists() and cache_path.stat().st_size > 0:
         try:
-            logger.info(f"Loading from cache: {cache_filename}")
+            logger.info(f"Loading from cache: {filename}")
             df = pd.read_parquet(cache_path, engine='pyarrow')
             # Verify the data is valid
             if df.empty or len(df.columns) < 2:  # Basic validation
-                logger.error(f"Invalid data in cache for {cache_filename}")
+                logger.error(f"Invalid data in cache for {filename}")
                 if cache_path.exists():
                     cache_path.unlink()
             else:
-                logger.info(f"Successfully loaded {cache_filename} from cache")
+                logger.info(f"Successfully loaded {filename} from cache")
                 logger.info(f"Cache file columns: {df.columns.tolist()}")
                 return df
         except Exception as e:
-            logger.error(f"Error reading cache {cache_filename}: {e}")
+            logger.error(f"Error reading cache {filename}: {e}")
             if cache_path.exists():
                 cache_path.unlink()
     
-    # If not cached or cache invalid, download from Google Drive
-    logger.info(f"Downloading {cache_filename} from Google Drive...")
+    # If not cached or cache invalid, load from local file
+    logger.info(f"Loading {filename} from local file...")
     
     try:
-        # Download to a temporary CSV file first
-        if not download_from_drive(file_id, temp_csv_path):
-            logger.error(f"Failed to download {cache_filename}")
-            return pd.DataFrame()
-        
         # Read and process in chunks
-        logger.info(f"Processing {cache_filename} in chunks...")
+        logger.info(f"Processing {filename} in chunks...")
         chunks = []
-        for chunk in pd.read_csv(temp_csv_path, chunksize=chunk_size):
+        for chunk in pd.read_csv(filename, chunksize=chunk_size):
             # Validate chunk has data
             if chunk.empty:
-                logger.warning(f"Empty chunk found in {cache_filename}")
+                logger.warning(f"Empty chunk found in {filename}")
                 continue
                 
             # Log chunk info for debugging
@@ -199,7 +226,7 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
             del chunk
         
         if not chunks:
-            logger.error(f"No data found in {cache_filename}")
+            logger.error(f"No data found in {filename}")
             return pd.DataFrame()
         
         # Combine chunks
@@ -208,46 +235,33 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=50000):
         
         # Validate final dataframe
         if df.empty:
-            logger.error(f"Final dataframe is empty for {cache_filename}")
+            logger.error(f"Final dataframe is empty for {filename}")
             return pd.DataFrame()
             
         logger.info(f"Final dataframe columns: {df.columns.tolist()}")
         logger.info(f"Final dataframe shape: {df.shape}")
         
         # Cache the data as parquet
-        logger.info(f"Caching {cache_filename}...")
+        logger.info(f"Caching {filename}...")
         table = pa.Table.from_pandas(df)
         pq.write_table(table, cache_path, compression='gzip')
         
-        # Clean up temporary file
-        if temp_csv_path.exists():
-            temp_csv_path.unlink()
-        
-        logger.info(f"Successfully cached {cache_filename}")
+        logger.info(f"Successfully cached {filename}")
         return df
         
     except Exception as e:
-        logger.error(f"Error processing {cache_filename}: {e}")
-        # Clean up temporary file if it exists
-        if temp_csv_path.exists():
-            temp_csv_path.unlink()
+        logger.error(f"Error processing {filename}: {e}")
         return pd.DataFrame()
 
-# Files dictionary with cache filenames and chunk sizes
+# Files dictionary with filenames and chunk sizes
 files = {
-    "all_predictions_5years_v2.csv": {
-        "id": "1x1jI_OUq7Jl5T3HBIiiHDUZIMI6OLcIV",
-        "cache": "predictions_v2.parquet",
+    "predictions_v2.csv": {
         "chunk_size": 50000  # Smaller chunks for large file
     },
     "final_data.csv": {
-        "id": "1rQ5QlFXgENzlNPit_ds8RtjegM_YLHU4",
-        "cache": "final_data.parquet",
         "chunk_size": 50000  # Smaller chunks for large file
     },
     "fire_data.csv": {
-        "id": "1DSTFM2imMKe1iqnANoRkmLQbuMEEcSxm",
-        "cache": "fire_data.parquet",
         "chunk_size": 100000  # Larger chunks for small file
     }
 }
@@ -255,9 +269,8 @@ files = {
 # Load data with caching
 logger.info("Starting data loading process...")
 all_predictions_df = load_and_cache_data(
-    files["all_predictions_5years_v2.csv"]["id"],
-    files["all_predictions_5years_v2.csv"]["cache"],
-    files["all_predictions_5years_v2.csv"]["chunk_size"]
+    "predictions_v2.csv",
+    files["predictions_v2.csv"]["chunk_size"]
 )
 
 # Validate predictions dataframe
@@ -276,13 +289,11 @@ if not all_predictions_df.empty:
         logger.info("All required columns present in predictions")
 
 full = load_and_cache_data(
-    files["final_data.csv"]["id"],
-    files["final_data.csv"]["cache"],
+    "final_data.csv",
     files["final_data.csv"]["chunk_size"]
 )
 full_2 = load_and_cache_data(
-    files["fire_data.csv"]["id"],
-    files["fire_data.csv"]["cache"],
+    "fire_data.csv",
     files["fire_data.csv"]["chunk_size"]
 )
 
@@ -533,5 +544,15 @@ def add_cors_headers(response):
     return response
 
 if __name__ == "__main__":
+    # Ensure all data files exist before starting the server
+    ensure_data_files()
+    
+    # Load data with caching
+    logger.info("Starting data loading process...")
+    all_predictions_df = load_and_cache_data(
+        "predictions_v2.csv",
+        DATA_FILES["predictions_v2.csv"]["chunk_size"]
+    )
+    
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production

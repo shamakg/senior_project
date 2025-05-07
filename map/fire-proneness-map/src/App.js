@@ -59,7 +59,7 @@ function App() {
   useEffect(() => {
     const fetchNoDataGrids = async () => {
       try {
-        const response = await fetch("http://127.0.0.1:5000/api/get-no-data-grids", {
+        const response = await fetch("http://127.0.0.1:5001/api/get-no-data-grids", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -88,13 +88,13 @@ function App() {
 
   useEffect(() => {
     const fetchWeeks = async () => {
-      const res = await axios.get("http://127.0.0.1:5000/api/get-weeks");
+      const res = await axios.get("http://127.0.0.1:5001/api/get-weeks");
       setAvailableWeeks(res.data.weeks);
       setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);  // latest week by default
     };
     fetchWeeks();
 
-    axios.get("http://127.0.0.1:5000/api/get-fire-weeks")
+    axios.get("http://127.0.0.1:5001/api/get-fire-weeks")
     .then(res => setFireWeeks(new Set(res.data.fire_weeks)))
     .catch(() => setFireWeeks(new Set()));
   }, []);
@@ -105,7 +105,7 @@ function App() {
     // Fetch no-data grids (unchanged)
     const fetchNoDataGrids = async () => {
       try {
-        const response = await fetch("http://127.0.0.1:5000/api/get-no-data-grids", {
+        const response = await fetch("http://127.0.0.1:5001/api/get-no-data-grids", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -131,7 +131,7 @@ function App() {
         bounds,
       }));
       try {
-        const res = await axios.post("http://127.0.0.1:5000/api/predict-all", {
+        const res = await axios.post("http://127.0.0.1:5001/api/predict-all", {
           week: selectedWeek,
           tiles: payload,
         });
@@ -170,8 +170,8 @@ function App() {
     setFeatures(null);
     try {
       const [predRes, featRes] = await Promise.all([
-        axios.post("http://127.0.0.1:5000/api/predict", { bounds, week: selectedWeek }),
-        axios.post("http://127.0.0.1:5000/api/get-features", { bounds }),
+        axios.post("http://127.0.0.1:5001/api/predict", { bounds, week: selectedWeek }),
+        axios.post("http://127.0.0.1:5001/api/get-features", { bounds }),
       ]);
       setPrediction(predRes.data.prediction);
       setFeatures(featRes.data.features || {});

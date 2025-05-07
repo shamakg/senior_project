@@ -68,3 +68,69 @@ This section has moved here: [https://facebook.github.io/create-react-app/docs/d
 ### `npm run build` fails to minify
 
 This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+
+# Fire Proneness Map Backend
+
+This is the backend server for the Fire Proneness Map application. It provides API endpoints for accessing fire prediction data and related features.
+
+## Data Requirements
+
+The server requires three data files to function:
+
+1. `predictions_v2.csv` - Contains fire prediction data
+2. `final_data.csv` - Contains feature data for each grid cell
+3. `fire_data.csv` - Contains historical fire occurrence data
+
+These files are not included in the repository due to their size. They are hosted as GitHub Releases and will be downloaded automatically when the server starts.
+
+## Setup
+
+1. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+2. Run the server:
+
+```bash
+python server.py
+```
+
+The server will automatically download any missing data files on startup.
+
+## API Endpoints
+
+- `GET /api/get-weeks` - Get list of available weeks
+- `POST /api/predict` - Get prediction for a specific location and week
+- `POST /api/get-no-data-grids` - Get list of grid cells without data
+- `GET /api/get-fire-weeks` - Get list of weeks with fire occurrences
+- `POST /api/predict-all` - Get predictions for multiple locations
+- `POST /api/get-features` - Get features for a specific location
+
+## Development
+
+For local development, you can run the server with:
+
+```bash
+PORT=5001 python server.py
+```
+
+The server will use port 5001 by default in development mode.
+
+## Deployment
+
+The server is configured to run on Render. It will automatically download the required data files during deployment.
+
+## Data Files
+
+The data files are hosted as GitHub Releases and will be downloaded automatically. If you need to update the data files:
+
+1. Create a new release on GitHub
+2. Upload the new data files to the release
+3. Update the release version in the `DATA_FILES` configuration in `server.py`
+4. Deploy the updated code
+
+## Caching
+
+The server uses Parquet files for caching the data. The cache files are stored in the same directory as the data files and are automatically created when the data is first loaded.
