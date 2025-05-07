@@ -9,6 +9,8 @@ import gdown
 import pickle
 from pathlib import Path
 import logging
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,17 +32,16 @@ CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 logger.info(f"Cache directory created at {CACHE_DIR}")
 
-def load_and_cache_data(file_id, cache_filename):
-    """Load data from Google Drive and cache it locally"""
+def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
+    """Load data from Google Drive and cache it locally using chunks"""
     cache_path = CACHE_DIR / cache_filename
     
     # If cached file exists and is not empty, load it
     if cache_path.exists() and cache_path.stat().st_size > 0:
         try:
             logger.info(f"Loading from cache: {cache_filename}")
-            if cache_filename.endswith('.pkl'):
-                with open(cache_path, 'rb') as f:
-                    return pickle.load(f)
+            if cache_filename.endswith('.parquet'):
+                return pd.read_parquet(cache_path)
             else:
                 return pd.read_csv(cache_path)
         except Exception as e:
@@ -54,15 +55,24 @@ def load_and_cache_data(file_id, cache_filename):
     try:
         gdown.download(url, output, quiet=False, fuzzy=True)
         output.seek(0)
-        df = pd.read_csv(output)
         
-        # Cache the data
+        # Read and process in chunks
+        logger.info(f"Processing {cache_filename} in chunks...")
+        chunks = []
+        for chunk in pd.read_csv(output, chunksize=chunk_size):
+            # Process each chunk
+            chunks.append(chunk)
+            # Clear memory
+            del chunk
+        
+        # Combine chunks
+        df = pd.concat(chunks, ignore_index=True)
+        del chunks  # Clear memory
+        
+        # Cache the data as parquet (more efficient than pickle)
         logger.info(f"Caching {cache_filename}...")
-        if cache_filename.endswith('.pkl'):
-            with open(cache_path, 'wb') as f:
-                pickle.dump(df, f)
-        else:
-            df.to_csv(cache_path, index=False)
+        parquet_path = cache_path.with_suffix('.parquet')
+        df.to_parquet(parquet_path, compression='gzip')
         
         logger.info(f"Successfully cached {cache_filename}")
         return df
@@ -72,9 +82,8 @@ def load_and_cache_data(file_id, cache_filename):
         if cache_path.exists():
             try:
                 logger.info(f"Attempting to use existing cache for {cache_filename}")
-                if cache_filename.endswith('.pkl'):
-                    with open(cache_path, 'rb') as f:
-                        return pickle.load(f)
+                if cache_filename.endswith('.parquet'):
+                    return pd.read_parquet(cache_path)
                 return pd.read_csv(cache_path)
             except Exception as cache_error:
                 logger.error(f"Failed to use cache for {cache_filename}: {cache_error}")
@@ -85,15 +94,15 @@ def load_and_cache_data(file_id, cache_filename):
 files = {
     "all_predictions_5years_v2.csv": {
         "id": "1x1jI_OUq7Jl5T3HBIiiHDUZIMI6OLcIV",
-        "cache": "predictions_v2.pkl"
+        "cache": "predictions_v2.parquet"
     },
     "final_data.csv": {
         "id": "1rQ5QlFXgENzlNPit_ds8RtjegM_YLHU4",
-        "cache": "final_data.pkl"
+        "cache": "final_data.parquet"
     },
     "fire_data.csv": {
         "id": "1DSTFM2imMKe1iqnANoRkmLQbuMEEcSxm",
-        "cache": "fire_data.pkl"
+        "cache": "fire_data.parquet"
     }
 }
 
