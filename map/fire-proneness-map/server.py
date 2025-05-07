@@ -183,14 +183,29 @@ def download_file(url, filename):
         return False
 
 def ensure_data_files():
-    """Ensure all required data files exist, download if missing"""
+    """Ensure all required data files exist"""
+    logger.info("Starting ensure_data_files...")
     for filename, config in DATA_FILES.items():
+        logger.info(f"Checking file: {filename}")
         if not os.path.exists(filename):
-            logger.info(f"{filename} not found locally, downloading...")
+            logger.info(f"{filename} not found locally, downloading from {config['url']}...")
             if not download_file(config["url"], filename):
-                raise Exception(f"Failed to download required file: {filename}")
+                logger.error(f"Failed to download required file: {filename}")
+                return False
+            logger.info(f"Successfully downloaded {filename}")
         else:
             logger.info(f"{filename} found locally")
+    return True
+
+def get_grid_id_from_bounds(bounds):
+    """Get grid ID from bounds"""
+    lat_center = (bounds[0][0] + bounds[1][0]) / 2
+    lng_center = (bounds[0][1] + bounds[1][1]) / 2
+    
+    y = int((lat_center - LAT_ORIGIN) / TILE_SIZE)
+    x = int((lng_center - LNG_ORIGIN) / TILE_SIZE)
+    
+    return f"{y}_{x}"
 
 def load_and_cache_data(filename, chunk_size=50000):
     """Load data from local file and cache it using chunks"""
