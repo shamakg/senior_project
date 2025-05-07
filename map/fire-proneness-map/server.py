@@ -77,13 +77,13 @@ full_feature_map = {}
 # Files dictionary with filenames and chunk sizes
 files = {
     "predictions_v2.csv": {
-        "chunk_size": 50000  # Smaller chunks for large file
+        "chunk_size": 10000  # Smaller chunks for large file
     },
     "final_data.csv": {
-        "chunk_size": 50000  # Smaller chunks for large file
+        "chunk_size": 10000  # Smaller chunks for large file
     },
     "fire_data.csv": {
-        "chunk_size": 100000  # Larger chunks for small file
+        "chunk_size": 1000  # Smaller chunks for small file
     }
 }
 
@@ -223,7 +223,7 @@ def get_grid_id_from_bounds(bounds):
     
     return f"{y}_{x}"
 
-def load_and_cache_data(filename, chunk_size=50000):
+def load_and_cache_data(filename, chunk_size=10000):
     """Load data from local file and cache it using chunks"""
     cache_path = CACHE_DIR / f"{filename}.parquet"
     temp_csv_path = CACHE_DIR / f"temp_{filename}.csv"
@@ -232,6 +232,7 @@ def load_and_cache_data(filename, chunk_size=50000):
     if cache_path.exists() and cache_path.stat().st_size > 0:
         try:
             logger.info(f"Loading from cache: {filename}")
+            # Read parquet file in chunks
             df = pd.read_parquet(cache_path, engine='pyarrow')
             # Verify the data is valid
             if df.empty or len(df.columns) < 2:  # Basic validation
@@ -254,6 +255,8 @@ def load_and_cache_data(filename, chunk_size=50000):
         # Read and process in chunks
         logger.info(f"Processing {filename} in chunks...")
         chunks = []
+        total_rows = 0
+        
         for chunk in pd.read_csv(filename, chunksize=chunk_size):
             # Validate chunk has data
             if chunk.empty:
@@ -265,13 +268,25 @@ def load_and_cache_data(filename, chunk_size=50000):
             logger.info(f"Chunk shape: {chunk.shape}")
             
             chunks.append(chunk)
-            del chunk
+            total_rows += len(chunk)
+            
+            # If we've processed too many rows, write to parquet and clear memory
+            if total_rows >= 100000:
+                logger.info(f"Writing intermediate data to parquet...")
+                temp_df = pd.concat(chunks, ignore_index=True)
+                table = pa.Table.from_pandas(temp_df)
+                pq.write_table(table, cache_path, compression='gzip')
+                chunks = []
+                total_rows = 0
+                del temp_df
+                import gc
+                gc.collect()
         
         if not chunks:
             logger.error(f"No data found in {filename}")
             return pd.DataFrame()
         
-        # Combine chunks
+        # Combine remaining chunks
         df = pd.concat(chunks, ignore_index=True)
         del chunks  # Clear memory
         
@@ -299,55 +314,78 @@ def process_predictions(df):
     """Process predictions dataframe and return processed data"""
     if df.empty:
         return None, None, None
+    
+    try:
+        # Process in smaller batches
+        batch_size = 100000
+        total_rows = len(df)
+        processed_chunks = []
         
-    df["scaled"] = df["raw_prob"] * 50
-    
-    # Extract the column as a 2D array (needed for sklearn)
-    X = df[["scaled"]].values
-    
-    # Apply Yeo-Johnson transformation
-    pt = PowerTransformer(method='yeo-johnson')
-    X_transformed = pt.fit_transform(X)
-    
-    # Scale to 0-1 range
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X_transformed)
-    
-    df["scaled"] = X_scaled
-    
-    # Create predictions by week
-    predictions = {
-        week: group.set_index("grid_id")["scaled"].to_dict()
-        for week, group in df.groupby("week_start")
-    }
-    
-    # Get available weeks
-    weeks = sorted(predictions.keys())
-    
-    # Perform spatial imputation for each week
-    for week, week_map in predictions.items():
-        # Build a set of all ids we expect from the full grid
-        full_ids = { get_grid_id_from_bounds(b) for b in generate_grid(BUTTE_BOUNDS) }
-        # Find the "suspicious" missing ones
-        missing_ids = full_ids - set(week_map.keys())
+        for start_idx in range(0, total_rows, batch_size):
+            end_idx = min(start_idx + batch_size, total_rows)
+            batch = df.iloc[start_idx:end_idx].copy()
+            
+            # Process the batch
+            batch["scaled"] = batch["raw_prob"] * 50
+            X = batch[["scaled"]].values
+            
+            # Apply Yeo-Johnson transformation
+            pt = PowerTransformer(method='yeo-johnson')
+            X_transformed = pt.fit_transform(X)
+            
+            # Scale to 0-1 range
+            scaler = MinMaxScaler()
+            X_scaled = scaler.fit_transform(X_transformed)
+            
+            batch["scaled"] = X_scaled
+            processed_chunks.append(batch)
+            
+            # Clear memory
+            del batch
+            import gc
+            gc.collect()
+        
+        # Combine processed chunks
+        df = pd.concat(processed_chunks, ignore_index=True)
+        del processed_chunks
+        gc.collect()
+        
+        # Create predictions by week
+        predictions = {}
+        for week, group in df.groupby("week_start"):
+            predictions[week] = group.set_index("grid_id")["scaled"].to_dict()
+        
+        # Get available weeks
+        weeks = sorted(predictions.keys())
+        
+        # Perform spatial imputation for each week
+        for week, week_map in predictions.items():
+            # Build a set of all ids we expect from the full grid
+            full_ids = { get_grid_id_from_bounds(b) for b in generate_grid(BUTTE_BOUNDS) }
+            # Find the "suspicious" missing ones
+            missing_ids = full_ids - set(week_map.keys())
 
-        for gid in missing_ids:
-            y, x = parse_grid_id(gid)
+            for gid in missing_ids:
+                y, x = parse_grid_id(gid)
 
-            above_id = f"{y-1}_{x}"
-            below_id = f"{y+1}_{x}"
+                above_id = f"{y-1}_{x}"
+                below_id = f"{y+1}_{x}"
 
-            above_val = week_map.get(above_id)
-            below_val = week_map.get(below_id)
+                above_val = week_map.get(above_id)
+                below_val = week_map.get(below_id)
 
-            if above_val is not None and below_val is not None:
-                week_map[gid] = (above_val + below_val) / 2
-            elif above_val is not None:
-                week_map[gid] = above_val
-            elif below_val is not None:
-                week_map[gid] = below_val
-    
-    return df, predictions, weeks
+                if above_val is not None and below_val is not None:
+                    week_map[gid] = (above_val + below_val) / 2
+                elif above_val is not None:
+                    week_map[gid] = above_val
+                elif below_val is not None:
+                    week_map[gid] = below_val
+        
+        return df, predictions, weeks
+        
+    except Exception as e:
+        logger.error(f"Error processing predictions: {e}")
+        return None, None, None
 
 def process_features(df):
     """Process features dataframe and return feature map"""
@@ -441,6 +479,10 @@ if not load_all_datasets():
     logger.error("Failed to load one or more datasets")
     raise Exception("Failed to load one or more datasets")
 logger.info("Datasets loaded successfully")
+
+# Get port from environment variable (Render provides this)
+port = int(os.environ.get("PORT", 10000))
+logger.info(f"Using port: {port}")
 
 @app.route("/", methods=["GET"])
 def home():
@@ -589,7 +631,4 @@ def parse_grid_id(gid):
     return int(y), int(x)
 
 if __name__ == "__main__":
-    # Start the server
-    port = int(os.environ.get("PORT", 5001))
-    logger.info(f"Starting server on port {port}...")
     app.run(host="0.0.0.0", port=port)
