@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { MapContainer, TileLayer, Rectangle, Popup, LayerGroup } from "react-leaflet";
+import { MapContainer, TileLayer, Rectangle, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import axios from "axios";
 import "./App.css"; 
-import L from 'leaflet';
-import 'leaflet.heat';
 import Slider from 'rc-slider';
 import 'rc-slider/assets/index.css';
 import { Tooltip } from 'react-tooltip';
@@ -361,11 +359,8 @@ availableWeeks.forEach((week, i) => {
               const rawPred = Math.min(1, Math.max(0, pred));
 
               // Stronger contrast
-              const boosted = Math.log1p(rawPred * 12) / Math.log(30);
-              // const norm = Math.pow(boosted, 0.6);
               const norm = Math.pow(rawPred, 0.4);
               
-
               let r, g, b;
               if (norm < 0.5) {
                 // Neon yellow zone (brighter): from (255, 255, 50) → (255, 200, 0)
