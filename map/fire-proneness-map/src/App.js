@@ -16,6 +16,8 @@ const BUTTE_BOUNDS = [
 
 const TILE_SIZE = 1.0 / 69;
 
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://127.0.0.1:5001";
+
 function generateGrid(bounds) {
   const [southWest, northEast] = bounds;
   const grid = [];
@@ -59,7 +61,7 @@ function App() {
   useEffect(() => {
     const fetchNoDataGrids = async () => {
       try {
-        const response = await fetch("http://127.0.0.1:5001/api/get-no-data-grids", {
+        const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -70,11 +72,10 @@ function App() {
         const data = await response.json();
         console.log("No data grids:", data.no_data_grids);
   
-        // SET the state here so it filters out correctly
         setNoDataGrids(new Set(data.no_data_grids));
       } catch (error) {
         console.error("Error fetching no-data grids:", error);
-        setNoDataGrids(new Set());  // fallback: no excluded tiles
+        setNoDataGrids(new Set());
       }
     };
   
@@ -88,13 +89,13 @@ function App() {
 
   useEffect(() => {
     const fetchWeeks = async () => {
-      const res = await axios.get("http://127.0.0.1:5001/api/get-weeks");
+      const res = await axios.get(`${API_BASE_URL}/api/get-weeks`);
       setAvailableWeeks(res.data.weeks);
-      setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);  // latest week by default
+      setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);
     };
     fetchWeeks();
 
-    axios.get("http://127.0.0.1:5001/api/get-fire-weeks")
+    axios.get(`${API_BASE_URL}/api/get-fire-weeks`)
     .then(res => setFireWeeks(new Set(res.data.fire_weeks)))
     .catch(() => setFireWeeks(new Set()));
   }, []);
@@ -102,10 +103,9 @@ function App() {
   useEffect(() => {
     if (!selectedWeek || grid.length === 0) return;
   
-    // Fetch no-data grids (unchanged)
     const fetchNoDataGrids = async () => {
       try {
-        const response = await fetch("http://127.0.0.1:5001/api/get-no-data-grids", {
+        const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -116,35 +116,32 @@ function App() {
         const data = await response.json();
         console.log("No data grids:", data.no_data_grids);
   
-        // Set the state here so it filters out correctly
         setNoDataGrids(new Set(data.no_data_grids));
       } catch (error) {
         console.error("Error fetching no-data grids:", error);
-        setNoDataGrids(new Set()); // fallback: no excluded tiles
+        setNoDataGrids(new Set());
       }
     };
   
-    // Fetch heatmap data
     const fetchHeatmapData = async () => {
       const payload = grid.map((bounds) => ({
         gridId: getGridIdFromBounds(bounds),
         bounds,
       }));
       try {
-        const res = await axios.post("http://127.0.0.1:5001/api/predict-all", {
+        const res = await axios.post(`${API_BASE_URL}/api/predict-all`, {
           week: selectedWeek,
           tiles: payload,
         });
     
-        // Create a map of gridId to prediction value
         const predictionsMap = new Map();
         res.data.predictions.forEach((p) => {
-          predictionsMap.set(p.grid_id, p.prediction);  // Assuming p has a gridId and prediction
+          predictionsMap.set(p.grid_id, p.prediction);
         });
         setHeatmapData(predictionsMap);
       } catch (error) {
         console.error("Error fetching heatmap data:", error);
-        setHeatmapData(new Map());  // Fallback: empty heatmap
+        setHeatmapData(new Map());
       }
     };
   
@@ -170,8 +167,8 @@ function App() {
     setFeatures(null);
     try {
       const [predRes, featRes] = await Promise.all([
-        axios.post("http://127.0.0.1:5001/api/predict", { bounds, week: selectedWeek }),
-        axios.post("http://127.0.0.1:5001/api/get-features", { bounds }),
+        axios.post(`${API_BASE_URL}/api/predict`, { bounds, week: selectedWeek }),
+        axios.post(`${API_BASE_URL}/api/get-features`, { bounds }),
       ]);
       setPrediction(predRes.data.prediction);
       setFeatures(featRes.data.features || {});
