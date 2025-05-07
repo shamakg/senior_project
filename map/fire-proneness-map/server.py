@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import PowerTransformer, MinMaxScaler
 import os
+import io
+import gdown
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
@@ -14,11 +16,47 @@ LNG_ORIGIN = -122.6
 BUTTE_BOUNDS = [
     [39.2, -122.6],
     [39.9, -121.2],
-]   
+]
+
+import pandas as pd
+import gdown
+import io
+
+def load_csv_from_drive_direct(file_id, **kwargs):
+    # This handles large files via gdown's built-in Google Drive logic
+    url = f"https://drive.google.com/uc?id={file_id}"
+    output = io.BytesIO()
+    
+    try:
+        # This downloads and stores file content in memory
+        gdown.download(url, output, quiet=False, fuzzy=True)  # fuzzy=True enables confirmation token bypass
+        output.seek(0)
+        return pd.read_csv(output, **kwargs)
+    except Exception as e:
+        print(f"Error downloading {file_id}: {e}")
+        return pd.DataFrame()  # Return empty DataFrame on failure
 
 
 
-all_predictions_df = pd.read_csv("all_predictions_5years_v2.csv")
+# Files dictionary
+files = {
+    "all_predictions_5years_v2.csv": "1x1jI_OUq7Jl5T3HBIiiHDUZIMI6OLcIV",
+    "final_data.csv": "1rQ5QlFXgENzlNPit_ds8RtjegM_YLHU4",
+    "fire_data.csv": "1DSTFM2imMKe1iqnANoRkmLQbuMEEcSxm",
+}
+
+
+all_predictions_df = load_csv_from_drive_direct(files["all_predictions_5years_v2.csv"])
+full = load_csv_from_drive_direct(files["final_data.csv"], index_col=0)
+full_2 = load_csv_from_drive_direct(files["fire_data.csv"])
+
+# Check if DataFrames are loaded
+print(all_predictions_df.head())
+print(full.head())
+print(full_2.head())
+
+
+
 all_predictions_df["scaled"] = all_predictions_df["raw_prob"]*50
 
 
@@ -103,7 +141,7 @@ for week, week_map in predictions_by_week.items():
 
 
 
-full = pd.read_csv("final_data.csv", index_col=0) 
+# full = pd.read_csv("final_data.csv", index_col=0) 
 full = (
     full.sort_values("week_start")  # or another column that tells which to keep
     .drop_duplicates("grid_id", keep="last")
@@ -180,7 +218,7 @@ def get_no_data_grids():
 @cross_origin()
 def get_fire_weeks():
     try:
-        full_2 = pd.read_csv("fire_data.csv")  
+        # full_2 = pd.read_csv("fire_data.csv")  
         fire_weeks = full_2[full_2["fire_occurred"] == 1.0]["week_start"].unique().tolist()
         print("FIRE WEEKS: ", fire_weeks)
         return jsonify({"fire_weeks": fire_weeks}), 200
@@ -256,5 +294,4 @@ def add_cors_headers(response):
     return response
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Uses the PORT from environment or defaults to 5000
-    app.run(host="0.0.0.0", port=port, debug=True) 
+    app.run(host="127.0.0.1", port=5000, debug=True)
