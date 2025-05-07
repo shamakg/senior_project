@@ -83,38 +83,67 @@ def download_from_drive(file_id, output_path):
         # Convert Path to string for gdown
         output_str = str(output_path)
         
-        # Use direct download URL
-        url = f"https://drive.google.com/uc?id={file_id}"
-        logger.info(f"Downloading from: {url}")
+        # Create a persistent session
+        session = requests.Session()
         
-        # First check if file is accessible
-        response = requests.head(url, allow_redirects=True)
-        logger.info(f"Initial response status: {response.status_code}")
-        logger.info(f"Final URL after redirects: {response.url}")
+        # Try different URL formats
+        urls = [
+            f"https://drive.google.com/uc?id={file_id}",  # Standard format
+            f"https://drive.google.com/file/d/{file_id}/view",  # File view format
+            f"https://drive.google.com/uc?export=download&id={file_id}"  # Export format
+        ]
         
-        # Use gdown with cookies and fuzzy download
-        try:
-            gdown.download(url, output_str, quiet=False, fuzzy=True, use_cookies=True)
+        for url in urls:
+            logger.info(f"Attempting download from: {url}")
             
-            # Verify download
-            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-                logger.info(f"Download completed successfully. File size: {os.path.getsize(output_str)} bytes")
+            # First check if file is accessible
+            try:
+                response = session.head(url, allow_redirects=True)
+                logger.info(f"Initial response status: {response.status_code}")
+                logger.info(f"Final URL after redirects: {response.url}")
                 
-                # Verify file content is not HTML
-                with open(output_str, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read(1024)
-                    if '<!DOCTYPE html>' in content or '<html>' in content:
-                        logger.error("Downloaded content is HTML instead of data")
-                        return False
+                if response.status_code != 200:
+                    logger.warning(f"URL {url} returned status {response.status_code}")
+                    continue
+                    
+                # If we get a virus scan warning, try to get the confirm token
+                if 'confirm=' in response.url:
+                    confirm_token = response.url.split('confirm=')[1].split('&')[0]
+                    url = f"{url}&confirm={confirm_token}"
+                    logger.info(f"Using confirm token: {confirm_token}")
                 
-                return True
-            else:
-                logger.error("Download failed - file is empty or doesn't exist")
-                return False
+            except Exception as e:
+                logger.warning(f"Error checking URL {url}: {e}")
+                continue
+            
+            # Try downloading with different gdown options
+            try:
+                # First attempt: Standard download with session
+                gdown.download(url, output_str, quiet=False, fuzzy=True, use_cookies=True)
                 
-        except Exception as e:
-            logger.error(f"Download error: {str(e)}")
-            return False
+                # Verify download
+                if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
+                    # Verify file content is not HTML
+                    with open(output_str, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read(1024)
+                        if '<!DOCTYPE html>' in content or '<html>' in content:
+                            logger.warning("Downloaded content is HTML, trying next URL")
+                            if os.path.exists(output_str):
+                                os.remove(output_str)
+                            continue
+                    
+                    logger.info(f"Download completed successfully. File size: {os.path.getsize(output_str)} bytes")
+                    return True
+                
+            except Exception as e:
+                logger.warning(f"Download failed with URL {url}: {e}")
+                if os.path.exists(output_str):
+                    os.remove(output_str)
+                continue
+        
+        # If we get here, all download attempts failed
+        logger.error("All download attempts failed")
+        return False
             
     except Exception as e:
         logger.error(f"Error in download_from_drive: {str(e)}")
