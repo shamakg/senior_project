@@ -255,6 +255,6 @@ def add_cors_headers(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     return response
 
-# if __name__ == "__main__":
-#     port = int(os.environ.get("PORT", 5000))  # Uses the PORT from environment or defaults to 5000
-#     app.run(host="0.0.0.0", port=port, debug=True) 
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))  # Uses the PORT from environment or defaults to 5000
+    app.run(host="0.0.0.0", port=port, debug=True) 
