@@ -37,19 +37,6 @@ CORS(app, resources={
     }
 })
 
-TILE_SIZE = 1.0 / 69
-LAT_ORIGIN = 39.2
-LNG_ORIGIN = -122.6
-BUTTE_BOUNDS = [
-    [39.2, -122.6],
-    [39.9, -121.2],
-]
-
-# Create cache directory in a writable location
-CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
-CACHE_DIR.mkdir(exist_ok=True, parents=True)
-logger.info(f"Cache directory created at {CACHE_DIR}")
-
 # Data file configurations
 DATA_FILES = {
     "predictions_v2.csv": {
@@ -73,6 +60,38 @@ full_2 = None
 predictions_by_week = {}
 available_weeks = []
 full_feature_map = {}
+
+# Initialize data when app starts
+logger.info("="*50)
+logger.info("Starting server initialization...")
+logger.info("="*50)
+
+# Ensure all data files exist before starting
+logger.info("Checking data files...")
+if not ensure_data_files():
+    logger.error("Failed to download required data files")
+    raise Exception("Failed to download required data files")
+logger.info("Data files check complete")
+
+# Load and validate all datasets
+logger.info("Loading datasets...")
+if not load_all_datasets():
+    logger.error("Failed to load one or more datasets")
+    raise Exception("Failed to load one or more datasets")
+logger.info("Datasets loaded successfully")
+
+# Create cache directory in a writable location
+CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
+CACHE_DIR.mkdir(exist_ok=True, parents=True)
+logger.info(f"Cache directory created at {CACHE_DIR}")
+
+TILE_SIZE = 1.0 / 69
+LAT_ORIGIN = 39.2
+LNG_ORIGIN = -122.6
+BUTTE_BOUNDS = [
+    [39.2, -122.6],
+    [39.9, -121.2],
+]
 
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
@@ -570,24 +589,6 @@ def parse_grid_id(gid):
     return int(y), int(x)
 
 if __name__ == "__main__":
-    logger.info("="*50)
-    logger.info("Starting server initialization...")
-    logger.info("="*50)
-    
-    # Ensure all data files exist before starting
-    logger.info("Checking data files...")
-    if not ensure_data_files():
-        logger.error("Failed to download required data files")
-        sys.exit(1)
-    logger.info("Data files check complete")
-
-    # Load and validate all datasets
-    logger.info("Loading datasets...")
-    if not load_all_datasets():
-        logger.error("Failed to load one or more datasets")
-        sys.exit(1)
-    logger.info("Datasets loaded successfully")
-
     # Start the server
     port = int(os.environ.get("PORT", 5001))
     logger.info(f"Starting server on port {port}...")
