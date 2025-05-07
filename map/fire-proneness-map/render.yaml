@@ -2,7 +2,7 @@ services:
   - type: web
     name: fire-proneness-map
     env: node
-    buildCommand: rm -rf node_modules package-lock.json && npm install --force && npm run build
+    buildCommand: rm -rf node_modules package-lock.json && npm install --force && npm install -g serve && npm run build
     startCommand: serve -s build
     envVars:
       - key: REACT_APP_API_URL
