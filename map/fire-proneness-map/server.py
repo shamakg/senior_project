@@ -112,96 +112,7 @@ def get_grid_id_from_bounds(bounds):
     
     return f"{y}_{x}"
 
-def get_direct_download_url(file_id):
-    """Get a direct download URL for a Google Drive file"""
-    try:
-        # First try to get the file info
-        url = f"https://drive.google.com/file/d/{file_id}/view"
-        response = requests.get(url)
-        if response.status_code != 200:
-            raise Exception(f"Failed to get file info: {response.status_code}")
-        
-        # Extract the download URL
-        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        return download_url
-    except Exception as e:
-        logger.error(f"Error getting direct download URL: {e}")
-        return None
 
-def cleanup_temp_files():
-    """Clean up any temporary files created by gdown"""
-    try:
-        # Clean up gdown's temporary directory if it exists
-        gdown_tmp = Path('/tmp/gdown')
-        if gdown_tmp.exists():
-            shutil.rmtree(gdown_tmp)
-            logger.info("Cleaned up gdown temporary files")
-    except Exception as e:
-        logger.error(f"Error cleaning up temporary files: {e}")
-
-def test_file_access(file_id):
-    """Test if a file is accessible via direct URL"""
-    url = f"https://drive.google.com/uc?id={file_id}"
-    try:
-        response = requests.head(url, allow_redirects=True)
-        logger.info(f"File access test for {file_id}:")
-        logger.info(f"Status code: {response.status_code}")
-        logger.info(f"Final URL: {response.url}")
-        return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Error testing file access: {e}")
-        return False
-
-def download_from_drive(file_id, output_path):
-    """Download file from Google Drive using gdown with specific configuration"""
-    try:
-        # Convert Path to string for gdown
-        output_str = str(output_path)
-        
-        # Use the file view URL format which works better for public files
-        url = f"https://drive.google.com/file/d/{file_id}/view"
-        logger.info(f"Attempting download from: {url}")
-        
-        try:
-            # Use gdown with specific configuration for public files
-            gdown.download(
-                url,
-                output_str,
-                quiet=False,
-                fuzzy=True,
-                use_cookies=True,
-                verify=True,
-                proxy=None,
-                speed=None,
-                no_check_certificate=False
-            )
-            
-            # Verify download
-            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-                # Verify file content is not HTML
-                with open(output_str, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read(1024)
-                    if '<!DOCTYPE html>' in content or '<html>' in content:
-                        logger.error("Downloaded content is HTML instead of data")
-                        if os.path.exists(output_str):
-                            os.remove(output_str)
-                        return False
-                
-                logger.info(f"Download completed successfully. File size: {os.path.getsize(output_str)} bytes")
-                return True
-            else:
-                logger.error("Download failed - file is empty or doesn't exist")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Download error: {str(e)}")
-            if os.path.exists(output_str):
-                os.remove(output_str)
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error in download_from_drive: {str(e)}")
-        return False
 
 def download_file(url, filename):
     """Download a file from GitHub Releases"""
@@ -286,16 +197,16 @@ def load_and_cache_data(filename, chunk_size=10000):
             total_rows += len(chunk)
             
             # If we've processed too many rows, write to parquet and clear memory
-            if total_rows >= 100000:
-                logger.info(f"Writing intermediate data to parquet...")
-                temp_df = pd.concat(chunks, ignore_index=True)
-                table = pa.Table.from_pandas(temp_df)
-                pq.write_table(table, cache_path, compression='gzip')
-                chunks = []
-                total_rows = 0
-                del temp_df
-                import gc
-                gc.collect()
+            # if total_rows >= 100000:
+            #     logger.info(f"Writing intermediate data to parquet...")
+            #     temp_df = pd.concat(chunks, ignore_index=True)
+            #     table = pa.Table.from_pandas(temp_df)
+            #     pq.write_table(table, cache_path, compression='gzip')
+            #     chunks = []
+            #     total_rows = 0
+            #     del temp_df
+            #     import gc
+            #     gc.collect()
         
         if not chunks:
             logger.error(f"No data found in {filename}")
