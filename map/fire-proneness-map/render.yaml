@@ -1,12 +1,12 @@
 services:
   - type: web
-    name: fire-proneness-map
+    name: fire-proneness-map-frontend
     env: node
-    buildCommand: rm -rf node_modules package-lock.json && npm install --force && npm install -g serve && npm run build
-    startCommand: serve -s build
+    buildCommand: rm -rf node_modules package-lock.json && npm install --force && npm run build
+    startCommand: npm start
     envVars:
       - key: REACT_APP_API_URL
-        value: https://fire-proneness-map-backend.onrender.com
+        value: https://senior-project-gvgp.onrender.com
     staticPublishPath: ./build
     routes:
       - type: rewrite

@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS, cross_origin
+from flask_cors import CORS
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import PowerTransformer, MinMaxScaler
@@ -23,15 +23,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-# Update CORS configuration to allow requests from both localhost and the deployed frontend
 CORS(app, resources={
     r"/api/*": {
         "origins": [
-            "http://localhost:3000",
-            "https://fire-proneness-map-frontend.onrender.com"
+            "https://fire-proneness-map-frontend.onrender.com",
+            "http://localhost:3000"
         ],
         "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type"]
     }
 })
 
@@ -397,12 +396,10 @@ def home():
     return jsonify({"status": "OK"}), 200
 
 @app.route("/api/get-weeks", methods=["GET"])
-@cross_origin()
 def get_weeks():
     return jsonify({"weeks": available_weeks})
 
 @app.route("/api/predict", methods=["POST", "OPTIONS"])
-@cross_origin()
 def predict():
     if request.method == "OPTIONS":
         return jsonify({}), 200
@@ -428,7 +425,6 @@ def predict():
         return jsonify({"error": "Prediction failed"}), 500
 
 @app.route("/api/get-no-data-grids", methods=["POST", "OPTIONS"])
-@cross_origin()
 def get_no_data_grids():
     if request.method == "OPTIONS":
         return jsonify({}), 200
@@ -452,7 +448,6 @@ def get_no_data_grids():
         return jsonify({"error": "Failed to get no-data grids"}), 500
     
 @app.route("/api/get-fire-weeks", methods=["GET"])
-@cross_origin()
 def get_fire_weeks():
     try:
         # full_2 = pd.read_csv("fire_data.csv")  
@@ -464,7 +459,6 @@ def get_fire_weeks():
         return jsonify({"error": "Failed to retrieve fire weeks"}), 500
 
 @app.route("/api/predict-all", methods=["POST", "OPTIONS"])
-@cross_origin()
 def predict_all():
     if request.method == "OPTIONS":
         return jsonify({}), 200
@@ -502,7 +496,6 @@ def predict_all():
 
 
 @app.route("/api/get-features", methods=["POST", "OPTIONS"])
-@cross_origin()
 def get_features():
     if request.method == "OPTIONS":
         return jsonify({}), 200
