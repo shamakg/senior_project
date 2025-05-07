@@ -367,43 +367,57 @@ def load_all_datasets():
     """Load and validate all datasets."""
     global all_predictions_df, full, full_2, predictions_by_week, available_weeks, full_feature_map
     
-    logging.info("Starting data loading process...")
+    print("Starting data loading process...")
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Directory contents: {os.listdir('.')}")
     
     # Load predictions data
+    print("Loading predictions data...")
     predictions_df = load_and_cache_data("predictions_v2.csv", files["predictions_v2.csv"]["chunk_size"])
     if predictions_df is None or predictions_df.empty:
-        logging.error("Failed to load predictions data")
+        print("ERROR: Failed to load predictions data")
         return False
+    print("Successfully loaded predictions data")
     
     # Load features data
+    print("Loading features data...")
     features_df = load_and_cache_data("final_data.csv", files["final_data.csv"]["chunk_size"])
     if features_df is None or features_df.empty:
-        logging.error("Failed to load features data")
+        print("ERROR: Failed to load features data")
         return False
+    print("Successfully loaded features data")
     
     # Load fire data
+    print("Loading fire data...")
     fire_df = load_and_cache_data("fire_data.csv", files["fire_data.csv"]["chunk_size"])
     if fire_df is None or fire_df.empty:
-        logging.error("Failed to load fire data")
+        print("ERROR: Failed to load fire data")
         return False
+    print("Successfully loaded fire data")
     
     # Process predictions
+    print("Processing predictions...")
     all_predictions_df, predictions_by_week, available_weeks = process_predictions(predictions_df)
     if all_predictions_df is None:
-        logging.error("Failed to process predictions")
+        print("ERROR: Failed to process predictions")
         return False
+    print(f"Successfully processed predictions. Available weeks: {available_weeks}")
     
     # Process features
+    print("Processing features...")
     full = features_df
     full_feature_map = process_features(features_df)
     if full_feature_map is None:
-        logging.error("Failed to process features")
+        print("ERROR: Failed to process features")
         return False
+    print("Successfully processed features")
     
     # Store fire data
+    print("Storing fire data...")
     full_2 = fire_df
+    print("Successfully stored fire data")
     
-    logging.info("All datasets loaded and processed successfully")
+    print("All datasets loaded and processed successfully")
     return True
 
 @app.route("/", methods=["GET"])
@@ -553,18 +567,25 @@ def parse_grid_id(gid):
     return int(y), int(x)
 
 if __name__ == "__main__":
+    print("="*50)
+    print("Starting server initialization...")
+    print("="*50)
+    
     # Ensure all data files exist before starting
+    print("Checking data files...")
     if not ensure_data_files():
-        logging.error("Failed to download required data files from GitHub Releases")
-        logging.error("Please check that the files exist in the latest release")
+        print("ERROR: Failed to download required data files")
         sys.exit(1)
+    print("Data files check complete")
 
     # Load and validate all datasets
+    print("Loading datasets...")
     if not load_all_datasets():
-        logging.error("Failed to load one or more datasets")
-        logging.error("Please check the data files and try again")
+        print("ERROR: Failed to load one or more datasets")
         sys.exit(1)
+    print("Datasets loaded successfully")
 
     # Start the server
     port = int(os.environ.get("PORT", 5001))
+    print(f"Starting server on port {port}...")
     app.run(host="0.0.0.0", port=port)
