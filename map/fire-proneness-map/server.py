@@ -78,25 +78,46 @@ def test_file_access(file_id):
         return False
 
 def download_from_drive(file_id, output_path):
-    """Download file from Google Drive using gdown"""
+    """Download file from Google Drive using gdown's direct method"""
     try:
-        # Use the direct download URL format
-        url = f"https://drive.google.com/file/d/{file_id}/view"
-        logger.info(f"Downloading from: {url}")
-        
         # Convert Path to string for gdown
         output_str = str(output_path)
         
-        # Use gdown with fuzzy=True for better handling of large files
-        gdown.download(url, output_str, fuzzy=True, quiet=False)
+        # Use gdown's direct download method
+        url = f"https://drive.google.com/uc?id={file_id}"
+        logger.info(f"Downloading from: {url}")
         
-        # Verify the file was downloaded
-        if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
-            logger.info("Download completed successfully")
-            return True
-        else:
-            logger.error("Download failed - file is empty or doesn't exist")
-            return False
+        # Try direct download first
+        try:
+            gdown.download(url, output_str, quiet=False)
+            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
+                logger.info("Download completed successfully")
+                return True
+        except Exception as e:
+            logger.warning(f"Direct download failed, trying with fuzzy: {str(e)}")
+        
+        # If direct download fails, try with fuzzy=True
+        try:
+            gdown.download(url, output_str, fuzzy=True, quiet=False)
+            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
+                logger.info("Download completed successfully with fuzzy=True")
+                return True
+        except Exception as e:
+            logger.error(f"Fuzzy download failed: {str(e)}")
+        
+        # If both methods fail, try one last time with the file view URL
+        try:
+            view_url = f"https://drive.google.com/file/d/{file_id}/view"
+            logger.info(f"Trying view URL: {view_url}")
+            gdown.download(view_url, output_str, fuzzy=True, quiet=False)
+            if os.path.exists(output_str) and os.path.getsize(output_str) > 0:
+                logger.info("Download completed successfully with view URL")
+                return True
+        except Exception as e:
+            logger.error(f"View URL download failed: {str(e)}")
+        
+        logger.error("All download methods failed")
+        return False
             
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
