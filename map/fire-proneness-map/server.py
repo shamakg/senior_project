@@ -87,6 +87,15 @@ files = {
     }
 }
 
+def generate_grid(bounds, tile_size=1.0 / 69):
+    """Generate a grid of tiles for the given bounds"""
+    south_west, north_east = bounds
+    grid = []
+    for lat in np.arange(south_west[0], north_east[0], tile_size):
+        for lng in np.arange(south_west[1], north_east[1], tile_size):
+            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
+    return grid
+
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
     try:
@@ -197,6 +206,8 @@ def download_file(url, filename):
     except Exception as e:
         logger.error(f"Error downloading {filename}: {e}")
         return False
+    
+
 
 def ensure_data_files():
     """Ensure all required data files exist"""
@@ -616,14 +627,7 @@ def add_cors_headers(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     return response
 
-def generate_grid(bounds, tile_size=1.0 / 69):
-    """Generate a grid of tiles for the given bounds"""
-    south_west, north_east = bounds
-    grid = []
-    for lat in np.arange(south_west[0], north_east[0], tile_size):
-        for lng in np.arange(south_west[1], north_east[1], tile_size):
-            grid.append([[lat, lng], [lat + tile_size, lng + tile_size]])
-    return grid
+
 
 def parse_grid_id(gid):
     """Parse grid ID string into y, x coordinates"""
