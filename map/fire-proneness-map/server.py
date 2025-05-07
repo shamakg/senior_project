@@ -37,6 +37,19 @@ CORS(app, resources={
     }
 })
 
+# Create cache directory in a writable location
+CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
+CACHE_DIR.mkdir(exist_ok=True, parents=True)
+logger.info(f"Cache directory created at {CACHE_DIR}")
+
+TILE_SIZE = 1.0 / 69
+LAT_ORIGIN = 39.2
+LNG_ORIGIN = -122.6
+BUTTE_BOUNDS = [
+    [39.2, -122.6],
+    [39.9, -121.2],
+]
+
 # Data file configurations
 DATA_FILES = {
     "predictions_v2.csv": {
@@ -60,38 +73,6 @@ full_2 = None
 predictions_by_week = {}
 available_weeks = []
 full_feature_map = {}
-
-# Initialize data when app starts
-logger.info("="*50)
-logger.info("Starting server initialization...")
-logger.info("="*50)
-
-# Ensure all data files exist before starting
-logger.info("Checking data files...")
-if not ensure_data_files():
-    logger.error("Failed to download required data files")
-    raise Exception("Failed to download required data files")
-logger.info("Data files check complete")
-
-# Load and validate all datasets
-logger.info("Loading datasets...")
-if not load_all_datasets():
-    logger.error("Failed to load one or more datasets")
-    raise Exception("Failed to load one or more datasets")
-logger.info("Datasets loaded successfully")
-
-# Create cache directory in a writable location
-CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
-CACHE_DIR.mkdir(exist_ok=True, parents=True)
-logger.info(f"Cache directory created at {CACHE_DIR}")
-
-TILE_SIZE = 1.0 / 69
-LAT_ORIGIN = 39.2
-LNG_ORIGIN = -122.6
-BUTTE_BOUNDS = [
-    [39.2, -122.6],
-    [39.9, -121.2],
-]
 
 def get_direct_download_url(file_id):
     """Get a direct download URL for a Google Drive file"""
@@ -301,19 +282,6 @@ def load_and_cache_data(filename, chunk_size=50000):
         logger.error(f"Error processing {filename}: {e}")
         return pd.DataFrame()
 
-# Files dictionary with filenames and chunk sizes
-files = {
-    "predictions_v2.csv": {
-        "chunk_size": 50000  # Smaller chunks for large file
-    },
-    "final_data.csv": {
-        "chunk_size": 50000  # Smaller chunks for large file
-    },
-    "fire_data.csv": {
-        "chunk_size": 100000  # Larger chunks for small file
-    }
-}
-
 def process_predictions(df):
     """Process predictions dataframe and return processed data"""
     if df.empty:
@@ -441,6 +409,38 @@ def load_all_datasets():
     
     logger.info("All datasets loaded and processed successfully")
     return True
+
+# Initialize data when app starts
+logger.info("="*50)
+logger.info("Starting server initialization...")
+logger.info("="*50)
+
+# Ensure all data files exist before starting
+logger.info("Checking data files...")
+if not ensure_data_files():
+    logger.error("Failed to download required data files")
+    raise Exception("Failed to download required data files")
+logger.info("Data files check complete")
+
+# Load and validate all datasets
+logger.info("Loading datasets...")
+if not load_all_datasets():
+    logger.error("Failed to load one or more datasets")
+    raise Exception("Failed to load one or more datasets")
+logger.info("Datasets loaded successfully")
+
+# Files dictionary with filenames and chunk sizes
+files = {
+    "predictions_v2.csv": {
+        "chunk_size": 50000  # Smaller chunks for large file
+    },
+    "final_data.csv": {
+        "chunk_size": 50000  # Smaller chunks for large file
+    },
+    "fire_data.csv": {
+        "chunk_size": 100000  # Larger chunks for small file
+    }
+}
 
 @app.route("/", methods=["GET"])
 def home():
