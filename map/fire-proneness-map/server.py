@@ -11,6 +11,8 @@ from pathlib import Path
 import logging
 import pyarrow as pa
 import pyarrow.parquet as pq
+import requests
+from urllib.parse import urlparse, parse_qs
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +34,29 @@ CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 logger.info(f"Cache directory created at {CACHE_DIR}")
 
+def get_file_id_from_url(url):
+    """Extract file ID from Google Drive URL"""
+    parsed = urlparse(url)
+    if parsed.netloc == 'drive.google.com':
+        if '/file/d/' in url:
+            return url.split('/file/d/')[1].split('/')[0]
+        elif 'id=' in url:
+            return parse_qs(parsed.query)['id'][0]
+    return url  # If it's already a file ID
+
+def download_from_drive(file_id, output):
+    """Download file from Google Drive with better error handling"""
+    try:
+        url = f"https://drive.google.com/uc?id={file_id}"
+        response = gdown.download(url, output, quiet=False, fuzzy=True)
+        if response is not None:
+            logger.info("Download successful!")
+            return True
+        raise Exception("Download failed - no response")
+    except Exception as e:
+        logger.error(f"Download error: {str(e)}")
+        return False
+
 def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
     """Load data from Google Drive and cache it locally using chunks"""
     cache_path = CACHE_DIR / cache_filename
@@ -49,11 +74,14 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
     
     # If not cached or cache invalid, download from Google Drive
     logger.info(f"Downloading {cache_filename} from Google Drive...")
-    url = f"https://drive.google.com/uc?id={file_id}"
     output = io.BytesIO()
     
+    # Try to download the file
+    if not download_from_drive(file_id, output):
+        logger.error(f"Failed to download {cache_filename}. Please check if the file is publicly accessible.")
+        return pd.DataFrame()
+    
     try:
-        gdown.download(url, output, quiet=False, fuzzy=True)
         output.seek(0)
         
         # Read and process in chunks
@@ -64,6 +92,10 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
             chunks.append(chunk)
             # Clear memory
             del chunk
+        
+        if not chunks:
+            logger.error(f"No data found in {cache_filename}")
+            return pd.DataFrame()
         
         # Combine chunks
         df = pd.concat(chunks, ignore_index=True)
@@ -77,7 +109,7 @@ def load_and_cache_data(file_id, cache_filename, chunk_size=100000):
         logger.info(f"Successfully cached {cache_filename}")
         return df
     except Exception as e:
-        logger.error(f"Error downloading {cache_filename}: {e}")
+        logger.error(f"Error processing {cache_filename}: {e}")
         # If download fails but we have an old cache, try to use it
         if cache_path.exists():
             try:
@@ -118,6 +150,7 @@ full_2 = load_and_cache_data(files["fire_data.csv"]["id"],
 # Verify data loading
 if all_predictions_df.empty or full.empty or full_2.empty:
     logger.warning("One or more datasets failed to load properly")
+    logger.warning("Please ensure all Google Drive files are publicly accessible")
 else:
     logger.info("All datasets loaded successfully")
 
