@@ -6,6 +6,13 @@ from sklearn.preprocessing import PowerTransformer, MinMaxScaler
 import os
 import io
 import gdown
+import pickle
+from pathlib import Path
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
@@ -18,44 +25,92 @@ BUTTE_BOUNDS = [
     [39.9, -121.2],
 ]
 
-import pandas as pd
-import gdown
-import io
+# Create cache directory in a writable location
+CACHE_DIR = Path("/tmp/cache")  # Render's /tmp directory is writable
+CACHE_DIR.mkdir(exist_ok=True, parents=True)
+logger.info(f"Cache directory created at {CACHE_DIR}")
 
-def load_csv_from_drive_direct(file_id, **kwargs):
-    # This handles large files via gdown's built-in Google Drive logic
+def load_and_cache_data(file_id, cache_filename):
+    """Load data from Google Drive and cache it locally"""
+    cache_path = CACHE_DIR / cache_filename
+    
+    # If cached file exists and is not empty, load it
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        try:
+            logger.info(f"Loading from cache: {cache_filename}")
+            if cache_filename.endswith('.pkl'):
+                with open(cache_path, 'rb') as f:
+                    return pickle.load(f)
+            else:
+                return pd.read_csv(cache_path)
+        except Exception as e:
+            logger.error(f"Error reading cache {cache_filename}: {e}")
+    
+    # If not cached or cache invalid, download from Google Drive
+    logger.info(f"Downloading {cache_filename} from Google Drive...")
     url = f"https://drive.google.com/uc?id={file_id}"
     output = io.BytesIO()
     
     try:
-        # This downloads and stores file content in memory
-        gdown.download(url, output, quiet=False, fuzzy=True)  # fuzzy=True enables confirmation token bypass
+        gdown.download(url, output, quiet=False, fuzzy=True)
         output.seek(0)
-        return pd.read_csv(output, **kwargs)
+        df = pd.read_csv(output)
+        
+        # Cache the data
+        logger.info(f"Caching {cache_filename}...")
+        if cache_filename.endswith('.pkl'):
+            with open(cache_path, 'wb') as f:
+                pickle.dump(df, f)
+        else:
+            df.to_csv(cache_path, index=False)
+        
+        logger.info(f"Successfully cached {cache_filename}")
+        return df
     except Exception as e:
-        print(f"Error downloading {file_id}: {e}")
-        return pd.DataFrame()  # Return empty DataFrame on failure
+        logger.error(f"Error downloading {cache_filename}: {e}")
+        # If download fails but we have an old cache, try to use it
+        if cache_path.exists():
+            try:
+                logger.info(f"Attempting to use existing cache for {cache_filename}")
+                if cache_filename.endswith('.pkl'):
+                    with open(cache_path, 'rb') as f:
+                        return pickle.load(f)
+                return pd.read_csv(cache_path)
+            except Exception as cache_error:
+                logger.error(f"Failed to use cache for {cache_filename}: {cache_error}")
+                return pd.DataFrame()  # Return empty DataFrame as last resort
+        return pd.DataFrame()
 
-
-
-# Files dictionary
+# Files dictionary with cache filenames
 files = {
-    "all_predictions_5years_v2.csv": "1x1jI_OUq7Jl5T3HBIiiHDUZIMI6OLcIV",
-    "final_data.csv": "1rQ5QlFXgENzlNPit_ds8RtjegM_YLHU4",
-    "fire_data.csv": "1DSTFM2imMKe1iqnANoRkmLQbuMEEcSxm",
+    "all_predictions_5years_v2.csv": {
+        "id": "1x1jI_OUq7Jl5T3HBIiiHDUZIMI6OLcIV",
+        "cache": "predictions_v2.pkl"
+    },
+    "final_data.csv": {
+        "id": "1rQ5QlFXgENzlNPit_ds8RtjegM_YLHU4",
+        "cache": "final_data.pkl"
+    },
+    "fire_data.csv": {
+        "id": "1DSTFM2imMKe1iqnANoRkmLQbuMEEcSxm",
+        "cache": "fire_data.pkl"
+    }
 }
 
+# Load data with caching
+logger.info("Starting data loading process...")
+all_predictions_df = load_and_cache_data(files["all_predictions_5years_v2.csv"]["id"], 
+                                       files["all_predictions_5years_v2.csv"]["cache"])
+full = load_and_cache_data(files["final_data.csv"]["id"], 
+                          files["final_data.csv"]["cache"])
+full_2 = load_and_cache_data(files["fire_data.csv"]["id"], 
+                            files["fire_data.csv"]["cache"])
 
-all_predictions_df = load_csv_from_drive_direct(files["all_predictions_5years_v2.csv"])
-full = load_csv_from_drive_direct(files["final_data.csv"], index_col=0)
-full_2 = load_csv_from_drive_direct(files["fire_data.csv"])
-
-# Check if DataFrames are loaded
-print(all_predictions_df.head())
-print(full.head())
-print(full_2.head())
-
-
+# Verify data loading
+if all_predictions_df.empty or full.empty or full_2.empty:
+    logger.warning("One or more datasets failed to load properly")
+else:
+    logger.info("All datasets loaded successfully")
 
 all_predictions_df["scaled"] = all_predictions_df["raw_prob"]*50
 
@@ -117,7 +172,7 @@ def parse_grid_id(gid):
 for week, week_map in predictions_by_week.items():
     # build a set of all ids we expect from the full grid
     full_ids = { get_grid_id_from_bounds(b) for b in generate_grid(BUTTE_BOUNDS) }
-    # find the “suspicious” missing ones
+    # find the "suspicious" missing ones
     missing_ids = full_ids - set(week_map.keys())
 
     for gid in missing_ids:
@@ -294,4 +349,5 @@ def add_cors_headers(response):
     return response
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
