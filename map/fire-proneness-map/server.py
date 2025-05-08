@@ -247,7 +247,7 @@ class DataManager:
             }
             
             # Format features with metadata
-            formatted_features = {}
+            formatted_features = []
             for key, value in raw_features.items():
                 if key in feature_metadata:
                     metadata = feature_metadata[key]
@@ -261,14 +261,13 @@ class DataManager:
                         celsius = value - 273.15
                         formatted_value = f"{value} K ({celsius:.1f}°C)"
                     
-                    formatted_features[key] = {
-                        'value': formatted_value,
+                    formatted_features.append({
+                        'name': key,
+                        'display': f"{metadata['icon']} {formatted_value} {metadata['unit']}",
                         'label': metadata['label'],
-                        'unit': metadata['unit'],
-                        'icon': metadata['icon'],
                         'tooltip': metadata['tooltip'],
                         'style': metadata['style']
-                    }
+                    })
             
             self._features_cache[grid_id] = formatted_features
             return formatted_features
