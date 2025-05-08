@@ -453,7 +453,7 @@ availableWeeks.forEach((week, i) => {
             ))}
           </ul>
         ) : (
-          <p>No features available for this location.</p>
+          <p>Loading...</p>
         )}
         <Tooltip id="feature-tooltip" place="right" />
       </div>
