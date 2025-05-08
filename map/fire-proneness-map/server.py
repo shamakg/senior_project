@@ -684,20 +684,20 @@ def get_features():
         logger.error(f"Feature retrieval error: {e}")
         return jsonify({"error": "Failed to get features", "details": str(e)}), 500
 
-@app.after_request
-def add_cors_headers(response):
-    origin = request.headers.get("Origin")
-    allowed_origins = [
-        "http://localhost:3000",
-        "https://fire-proneness-map-frontend.onrender.com"
-    ]
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Max-Age"] = "3600"
-    return response
+# @app.after_request
+# def add_cors_headers(response):
+#     origin = request.headers.get("Origin")
+#     allowed_origins = [
+#         "http://localhost:3000",
+#         "https://fire-proneness-map-frontend.onrender.com"
+#     ]
+#     if origin in allowed_origins:
+#         response.headers["Access-Control-Allow-Origin"] = origin
+#         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+#         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+#         response.headers["Access-Control-Allow-Credentials"] = "true"
+#         response.headers["Access-Control-Max-Age"] = "3600"
+#     return response
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)  
