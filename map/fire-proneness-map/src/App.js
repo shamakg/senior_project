@@ -7,16 +7,21 @@ import Slider from 'rc-slider';
 import 'rc-slider/assets/index.css';
 import { Tooltip } from 'react-tooltip';
 
+// bounds for butte county
 const BUTTE_BOUNDS = [
   [39.2, -122.6],
   [39.9, -121.2],
 ];
 
+// each tile is ~1 mile square
 const TILE_SIZE = 1.0 / 69;
 
-// Use Render URL for both development and production
-const API_BASE_URL = "https://senior-project-gvgp.onrender.com";
+// base url for api depending on environment
+const API_BASE_URL = process.env.NODE_ENV === 'development' 
+  ? "http://localhost:10000"
+  : (process.env.REACT_APP_API_URL || "https://senior-project-gvgp.onrender.com");
 
+// make all grid tiles within the bounds
 function generateGrid(bounds) {
   const [southWest, northEast] = bounds;
   const grid = [];
@@ -31,6 +36,7 @@ function generateGrid(bounds) {
   return grid;
 }
 
+// create grid id from the center of bounds
 function getGridIdFromBounds(bounds) {
   const latCenter = (bounds[0][0] + bounds[1][0]) / 2;
   const lngCenter = (bounds[0][1] + bounds[1][1]) / 2;
@@ -42,6 +48,7 @@ function getGridIdFromBounds(bounds) {
 }
 
 function App() {
+  // all the app state
   const [selectedBounds, setSelectedBounds] = useState(null);
   const [prediction, setPrediction] = useState(null);
   const [grid, setGrid] = useState([]);
@@ -54,16 +61,18 @@ function App() {
   const [fireWeeks, setFireWeeks] = useState(new Set());
   const [isLoading, setIsLoading] = useState(true);
 
+  // generate grid when app loads
   useEffect(() => {
     setGrid(generateGrid(BUTTE_BOUNDS));
   }, []);
 
+  // fetch all weeks and fire weeks once
   useEffect(() => {
     const fetchWeeks = async () => {
       try {
         const res = await axios.get(`${API_BASE_URL}/api/get-weeks`);
         setAvailableWeeks(res.data.weeks);
-        setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);
+        setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]); // pick latest week
       } catch (error) {
         console.error("Error fetching weeks:", error);
       }
@@ -84,10 +93,13 @@ function App() {
     });
   }, []);
 
+  // fetch heatmap + no-data grids when week changes
   useEffect(() => {
     if (!selectedWeek || grid.length === 0) return;
   
     setIsLoading(true);
+    
+    // get grids that have no data for this week
     const fetchNoDataGrids = async () => {
       let retries = 3;
       const attemptFetch = async () => {
@@ -106,9 +118,7 @@ function App() {
           }
     
           const data = await response.json();
-          if (data.error) {
-            throw new Error(data.error);
-          }
+          if (data.error) throw new Error(data.error);
     
           setNoDataGrids(new Set(data.no_data_grids));
           return true;
@@ -130,6 +140,7 @@ function App() {
       }
     };
   
+    // get prediction heatmap for all grids
     const fetchHeatmapData = async () => {
       let retries = 3;
       const attemptFetch = async () => {
@@ -144,9 +155,7 @@ function App() {
             tiles: payload,
           });
       
-          if (res.data.error) {
-            throw new Error(res.data.error);
-          }
+          if (res.data.error) throw new Error(res.data.error);
       
           const predictionsMap = new Map();
           res.data.predictions.forEach((p) => {
@@ -182,13 +191,7 @@ function App() {
     }
   }, [selectedWeek, grid]);
 
-  // useEffect(() => {
-  //   if (availableWeeks.length > 0) {
-  //     // pick the last (latest) week
-  //     setSelectedWeek(availableWeeks[availableWeeks.length - 1]);
-  //   }
-  // }, [availableWeeks]);
-
+  // when user clicks a tile
   const handleTileClick = async (bounds) => {
     setSelectedBounds(bounds);
     const gridId = getGridIdFromBounds(bounds);
@@ -205,28 +208,26 @@ function App() {
     }
   };
 
+  // helper to get the popup location
   const getPopupCenter = (bounds) => {
     const lat = (bounds[0][0] + bounds[1][0]) / 2;
     const lng = (bounds[0][1] + bounds[1][1]) / 2;
     return [lat, lng];
   };
 
-
+  // slider marks with fire icons and week labels
   const markInterval = 30;
-
-const marks = {};
-
-availableWeeks.forEach((week, i) => {
-  const showLabel = i % markInterval === 0;
-  const hasFire = fireWeeks.has(week);
-  const tooltipText = hasFire ? `There was really a fire here!` : `${week}`;
+  const marks = {};
+  availableWeeks.forEach((week, i) => {
+    const showLabel = i % markInterval === 0;
+    const hasFire = fireWeeks.has(week);
+    const tooltipText = hasFire ? `There was really a fire here!` : `${week}`;
     marks[i] = {
       label: (
         <div style={{ textAlign: "center", lineHeight: 1.2 }}
-        data-tooltip-id="week-tooltip"
+          data-tooltip-id="week-tooltip"
           data-tooltip-content={tooltipText}
         >
-          {/* Fire icon gets moved up */}
           {hasFire && (
             <img
               title={`There was really a fire here!`}
@@ -237,29 +238,25 @@ availableWeeks.forEach((week, i) => {
               style={{
                 display: "block",
                 margin: "0 auto",
-                marginBottom: 2, // Add some spacing between the icon and text
+                marginBottom: 2,
                 position: "relative",
-                top: -20, // Move the fire icon up above the slider
+                top: -20,
               }}
             />
           )}
-
-          {/* Add tick marks if no fire icon is present */}
           {!hasFire && (
             <div
               title={`${week}`}
               style={{
                 position: "relative",
-                top: -12, // Adjust position of tick mark to align with fire icons
+                top: -12,
                 width: 1.5,
-                height: 7, // Height of the tick mark
-                backgroundColor: "#d33", // Fire-themed color for tick marks
+                height: 7,
+                backgroundColor: "#d33",
                 margin: "0 auto",
               }}
             />
           )}
-
-          {/* Week label stays where it is */}
           {showLabel && (
             <div style={{ position: "relative", fontSize: 10, color: "#444", marginTop: 1, top: -8, }}>
               {week}
@@ -268,7 +265,7 @@ availableWeeks.forEach((week, i) => {
         </div>
       )
     };
-});
+  });
 
 
   
@@ -305,67 +302,7 @@ availableWeeks.forEach((week, i) => {
   railStyle={{ backgroundColor: "#d33", height: 6 }}
         />
         <Tooltip id="week-tooltip" place="top" style={{ backgroundColor: "#222", color: "#fff", fontSize: "12px", borderRadius: "4px" }} />
-
-          {/* <input
-            id="week-range"
-            type="range"
-            min="0"
-            max={availableWeeks.length - 1}
-            value={availableWeeks.indexOf(selectedWeek)}
-            onChange={(e) => setSelectedWeek(availableWeeks[parseInt(e.target.value)])}
-            className="slider"
-            onMouseMove={(e) => {
-              const index = parseInt(e.target.value);
-              const tooltip = document.getElementById("tooltip");
-              if (tooltip) {
-                tooltip.style.left = `${(index / (availableWeeks.length - 1)) * 100}%`;
-                tooltip.innerText = availableWeeks[index];
-              }
-            }}
-          />
-          <div id="tooltip" className="slider-tooltip">{selectedWeek}</div>
-          <div className="slider-ticks">
-            {availableWeeks.map((_, index) => (
-              <div
-                key={index}
-                className={`tick ${index % Math.ceil(availableWeeks.length / 6) === 0 
-                  ? "tick-labeled" 
-                  : "tick-small"}`}
-                style={{ width: "1px", height: "6px", background: "#444" }}
-
-              />
-            ))}
-          </div>
-          <div className="slider-labels">
-            {availableWeeks.map((week, index) =>
-              index % Math.ceil(availableWeeks.length / 6) === 0 ? (
-                <span key={index} className="slider-label">
-                  {week}
-                </span>
-              ) : (
-                <span key={index} className="slider-label empty-label" />
-              )
-            )}
-          </div> */}
         </div>
-        {/* Fire icons row */}
-        {/* <div className="slider-fires">
-  {availableWeeks.map((week, index) =>
-    fireWeeks.has(week) ? (
-      <span
-        key={index}
-        style={{
-          position: "absolute",
-          left: `${(index / (availableWeeks.length - 1)) * 100}%`,  // This is the issue
-          transform: "translateX(-50%)",  // This centers the icons
-          fontSize: "14px",
-        }}
-      >
-        <img src="/vecteezy_fire-icon-on-transparent-background_19787026.png" alt="Fire" width="30" height="16" />
-      </span>
-    ) : null
-  )}
-</div> */}
         <div className="week-display">Showing week: <strong>{selectedWeek}</strong></div>
       </div>
 

@@ -337,19 +337,18 @@ class DataManager:
                     'style': 'blue-brown'
                 }
             }
-            
-            # Format features with metadata
+            # format features with metadata
             formatted_features = []
             for key, value in raw_features.items():
                 if key in feature_metadata:
                     metadata = feature_metadata[key]
                     formatted_value = value
                     
-                    # Special formatting for specific features
+                    # special formatting for specific features
                     if key == 'ndvi':
-                        formatted_value = round(value / 10000, 3)  # Convert to 0-1 scale
+                        formatted_value = round(value / 10000, 3)  # convert to 0-1 scale
                     elif key == 'temperature_2m' or key == 'dewpoint_temperature_2m':
-                        # Convert Kelvin to Celsius
+                        # convert kelvin to celsius
                         celsius = value - 273.15
                         formatted_value = f"{value:.3f} K ({celsius:.1f}°C)"
                     elif key == 'evaporation_from_bare_soil_sum' or key == 'total_precipitation_sum':
@@ -369,8 +368,8 @@ class DataManager:
             return formatted_features
             
         except Exception as e:
-            logger.error(f"Error loading features for grid {grid_id}: {str(e)}")
-            logger.error(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
+            logger.error(f"error loading features for grid {grid_id}: {str(e)}")
+            logger.error(f"memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} mb")
             return []
 
     def get_fire_weeks(self):
@@ -379,21 +378,21 @@ class DataManager:
                 df = pd.read_parquet(CACHE_DIR / "fire_data.csv.parquet")
                 self._fire_data_cache = df[df["fire_occurred"] == 1.0]["week_start"].unique().tolist()
             except Exception as e:
-                logger.error(f"Error loading fire weeks: {e}")
+                logger.error(f"error loading fire weeks: {e}")
                 return []
         return self._fire_data_cache
 
 data_manager = DataManager()
 
 def download_file(url, filename):
-    """Download a file with streaming and progress tracking"""
+    """download a file with streaming and progress tracking"""
     try:
-        logger.info(f"Downloading {filename}...")
+        logger.info(f"downloading {filename}...")
         response = requests.get(url, stream=True, timeout=60)
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
-        block_size = 8192 * 4  # Increased block size for faster downloads
+        block_size = 8192 * 4  # increased block size for faster downloads
         downloaded = 0
         
         with open(filename, 'wb') as f:
@@ -402,58 +401,58 @@ def download_file(url, filename):
                 f.write(data)
                 if total_size > 0:
                     percent = (downloaded / total_size) * 100
-                    if percent % 5 == 0:  # Log every 5%
-                        logger.info(f"Download progress for {filename}: {percent:.1f}%")
+                    if percent % 5 == 0:  # log every 5%
+                        logger.info(f"download progress for {filename}: {percent:.1f}%")
         
-        # Verify file size after download
+        # verify file size after download
         actual_size = os.path.getsize(filename)
         if total_size > 0 and actual_size != total_size:
-            logger.error(f"Download incomplete for {filename}. Expected {total_size} bytes, got {actual_size} bytes")
+            logger.error(f"download incomplete for {filename}. expected {total_size} bytes, got {actual_size} bytes")
             return False
             
-        logger.info(f"Successfully downloaded {filename}")
+        logger.info(f"successfully downloaded {filename}")
         return True
     except Exception as e:
-        logger.error(f"Error downloading {filename}: {e}")
+        logger.error(f"error downloading {filename}: {e}")
         return False
 
 def process_and_cache_file(filename, chunk_size):
-    """Process and cache a file in chunks"""
+    """process and cache a file in chunks"""
     cache_path = CACHE_DIR / f"{filename}.parquet"
     
     if cache_path.exists() and cache_path.stat().st_size > 0:
-        logger.info(f"Cache exists for {filename}")
+        logger.info(f"cache exists for {filename}")
         return True
     
     try:
         writer = None
         total_rows = 0
         
-        # Process in smaller chunks to control memory usage
+        # process in smaller chunks to control memory usage
         for chunk in pd.read_csv(filename, chunksize=5000):
             if chunk.empty:
                 continue
                 
             if writer is None:
                 table = pa.Table.from_pandas(chunk)
-                writer = ParquetWriter(str(cache_path), table.schema, compression='snappy')  # Using snappy for better performance
+                writer = ParquetWriter(str(cache_path), table.schema, compression='snappy')  # using snappy for better performance
             else:
                 table = pa.Table.from_pandas(chunk)
             
             writer.write_table(table)
             total_rows += len(chunk)
             
-            # Free memory
+            # free memory
             del table
             del chunk
             gc.collect()
             
             if total_rows % 50000 == 0:
-                logger.info(f"Processed {total_rows} rows from {filename}")
+                logger.info(f"processed {total_rows} rows from {filename}")
             
-            # Check memory usage
+            # check memory usage
             if not data_manager.check_memory():
-                logger.warning("Memory threshold exceeded during processing")
+                logger.warning("memory threshold exceeded during processing")
                 if writer:
                     writer.close()
                 return False
@@ -461,17 +460,17 @@ def process_and_cache_file(filename, chunk_size):
         if writer:
             writer.close()
         
-        logger.info(f"Successfully cached {filename} with {total_rows} rows")
+        logger.info(f"successfully cached {filename} with {total_rows} rows")
         return True
         
     except Exception as e:
-        logger.error(f"Error processing {filename}: {e}")
+        logger.error(f"error processing {filename}: {e}")
         if writer:
             writer.close()
         return False
 
 def process_file(filename, config):
-    """Process a single file with its configuration"""
+    """process a single file with its configuration"""
     if not os.path.exists(filename):
         if not download_file(config["url"], filename):
             return False
@@ -479,16 +478,16 @@ def process_file(filename, config):
     if not process_and_cache_file(filename, config["chunk_size"]):
         return False
         
-    # Remove original CSV after successful processing
+    # remove original csv after successful processing
     if os.path.exists(filename):
         os.remove(filename)
     return True
 
 def ensure_data_files():
-    """Ensure all required data files exist and are processed"""
-    logger.info("Starting ensure_data_files...")
+    """ensure all required data files exist and are processed"""
+    logger.info("starting ensure_data_files...")
     
-    # Process files in parallel
+    # process files in parallel
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
             executor.submit(process_file, filename, config): filename 
@@ -499,16 +498,16 @@ def ensure_data_files():
             filename = futures[future]
             try:
                 if not future.result():
-                    logger.error(f"Failed to process {filename}")
+                    logger.error(f"failed to process {filename}")
                     return False
             except Exception as e:
-                logger.error(f"Error processing {filename}: {e}")
+                logger.error(f"error processing {filename}: {e}")
                 return False
     
     return True
 
 def generate_grid(bounds, tile_size=TILE_SIZE):
-    """Generate a grid of tiles for the given bounds"""
+    """generate a grid of tiles for the given bounds"""
     south_west, north_east = bounds
     grid = []
     for lat in np.arange(south_west[0], north_east[0], tile_size):
@@ -517,7 +516,7 @@ def generate_grid(bounds, tile_size=TILE_SIZE):
     return grid
 
 def get_grid_id_from_bounds(bounds):
-    """Get grid ID from bounds"""
+    """get grid id from bounds"""
     lat_center = (bounds[0][0] + bounds[1][0]) / 2
     lng_center = (bounds[0][1] + bounds[1][1]) / 2
     
@@ -526,18 +525,18 @@ def get_grid_id_from_bounds(bounds):
     
     return f"{y}_{x}"
 
-# Initialize data when app starts
+# initialize data when app starts
 logger.info("="*50)
-logger.info("Starting server initialization...")
+logger.info("starting server initialization...")
 logger.info("="*50)
 
 if not ensure_data_files():
-    logger.error("Failed to initialize data files")
-    raise Exception("Failed to initialize data files")
+    logger.error("failed to initialize data files")
+    raise Exception("failed to initialize data files")
 
-# Get port from environment variable
+# get port from environment variable
 port = int(os.environ.get("PORT", 10000))
-logger.info(f"Using port: {port}")
+logger.info(f"using port: {port}")
 
 @app.route("/", methods=["GET"])
 def home():
@@ -556,20 +555,20 @@ def predict():
         week = request.json.get("week")
         bounds = request.json.get("bounds")
         if not bounds or len(bounds) != 2 or not week:
-            return jsonify({"error": "Invalid bounds or week"}), 400
+            return jsonify({"error": "invalid bounds or week"}), 400
 
         grid_id = get_grid_id_from_bounds(bounds)
         predictions = data_manager.get_predictions_for_week(week)
         
         if grid_id not in predictions:
-            return jsonify({"prediction": "No data for this grid"}), 200
+            return jsonify({"prediction": "no data for this grid"}), 200
 
         calibrated_prob = predictions[grid_id]
         return jsonify({"prediction": str(round(calibrated_prob, 4))}), 200
 
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
-        return jsonify({"error": "Prediction failed"}), 500
+        logger.error(f"prediction error: {e}")
+        return jsonify({"error": "prediction failed"}), 500
 
 @app.route("/api/get-no-data-grids", methods=["POST", "OPTIONS"])
 def get_no_data_grids():
@@ -579,14 +578,14 @@ def get_no_data_grids():
     try:
         week = request.json.get("week")
         if not week:
-            return jsonify({"error": "Week not provided"}), 400
+            return jsonify({"error": "week not provided"}), 400
 
-        # Process in smaller batches to avoid memory issues
+        # process in smaller batches to avoid memory issues
         predictions = data_manager.get_predictions_for_week(week)
         all_grids = generate_grid(BUTTE_BOUNDS)
         no_data_grids = []
         
-        # Process grids in batches of 1000
+        # process grids in batches of 1000
         batch_size = 1000
         for i in range(0, len(all_grids), batch_size):
             batch = all_grids[i:i + batch_size]
@@ -595,15 +594,15 @@ def get_no_data_grids():
                 if grid_id not in predictions:
                     no_data_grids.append(grid_id)
             
-            # Force garbage collection after each batch
+            # force garbage collection after each batch
             if i % (batch_size * 5) == 0:
                 gc.collect()
                 
         return jsonify({"no_data_grids": no_data_grids}), 200
 
     except Exception as e:
-        logger.error(f"No-data grid error: {e}")
-        return jsonify({"error": "Failed to get no-data grids", "details": str(e)}), 500
+        logger.error(f"no-data grid error: {e}")
+        return jsonify({"error": "failed to get no-data grids", "details": str(e)}), 500
 
 @app.route("/api/get-fire-weeks", methods=["GET"])
 def get_fire_weeks():
@@ -611,8 +610,8 @@ def get_fire_weeks():
         fire_weeks = data_manager.get_fire_weeks()
         return jsonify({"fire_weeks": fire_weeks}), 200
     except Exception as e:
-        logger.error(f"Fire weeks error: {e}")
-        return jsonify({"error": "Failed to retrieve fire weeks"}), 500
+        logger.error(f"fire weeks error: {e}")
+        return jsonify({"error": "failed to retrieve fire weeks"}), 500
 
 @app.route("/api/predict-all", methods=["POST", "OPTIONS"])
 def predict_all():
@@ -625,14 +624,14 @@ def predict_all():
         tiles = data.get("tiles", [])
 
         if not week:
-            return jsonify({"error": "Week not provided"}), 400
+            return jsonify({"error": "week not provided"}), 400
         if not isinstance(tiles, list):
-            return jsonify({"error": "Tiles must be a list"}), 400
+            return jsonify({"error": "tiles must be a list"}), 400
 
         predictions = data_manager.get_predictions_for_week(week)
         results = []
         
-        # Process tiles in batches of 500
+        # process tiles in batches of 500
         batch_size = 500
         for i in range(0, len(tiles), batch_size):
             batch = tiles[i:i + batch_size]
@@ -651,15 +650,15 @@ def predict_all():
                     "prediction": float(round(pred, 4))
                 })
             
-            # Force garbage collection after each batch
+            # force garbage collection after each batch
             if i % (batch_size * 5) == 0:
                 gc.collect()
 
         return jsonify({"predictions": results}), 200
 
     except Exception as e:
-        logger.error(f"Predict-all error: {e}")
-        return jsonify({"error": "Failed to process predictions", "details": str(e)}), 500
+        logger.error(f"predict-all error: {e}")
+        return jsonify({"error": "failed to process predictions", "details": str(e)}), 500
 
 @app.route("/api/get-features", methods=["POST", "OPTIONS"])
 def get_features():
@@ -669,35 +668,35 @@ def get_features():
     try:
         bounds = request.json.get("bounds")
         if not bounds or len(bounds) != 2:
-            return jsonify({"error": "Invalid bounds"}), 400
+            return jsonify({"error": "invalid bounds"}), 400
 
         grid_id = get_grid_id_from_bounds(bounds)
         features = data_manager.get_features(grid_id)
         
-        # Always return an array, even if empty
+        # always return an array, even if empty
         if features is None:
             return jsonify({"features": []}), 200
 
         return jsonify({"features": features}), 200
 
     except Exception as e:
-        logger.error(f"Feature retrieval error: {e}")
-        return jsonify({"error": "Failed to get features", "details": str(e)}), 500
+        logger.error(f"feature retrieval error: {e}")
+        return jsonify({"error": "failed to get features", "details": str(e)}), 500
 
-# @app.after_request
-# def add_cors_headers(response):
-#     origin = request.headers.get("Origin")
-#     allowed_origins = [
-#         "http://localhost:3000",
-#         "https://fire-proneness-map-frontend.onrender.com"
-#     ]
-#     if origin in allowed_origins:
-#         response.headers["Access-Control-Allow-Origin"] = origin
-#         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-#         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-#         response.headers["Access-Control-Allow-Credentials"] = "true"
-#         response.headers["Access-Control-Max-Age"] = "3600"
-#     return response
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get("Origin")
+    allowed_origins = [
+        "http://localhost:3000",
+        "https://fire-proneness-map-frontend.onrender.com"
+    ]
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Max-Age"] = "3600"
+    return response
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=port)  
+    app.run(host="0.0.0.0", port=port)
