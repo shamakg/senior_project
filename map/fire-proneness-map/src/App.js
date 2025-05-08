@@ -191,18 +191,17 @@ function App() {
 
   const handleTileClick = async (bounds) => {
     setSelectedBounds(bounds);
-    setPrediction("Loading...");
+    const gridId = getGridIdFromBounds(bounds);
+    const pred = heatmapData.get(gridId);
+    setPrediction(pred ? pred.toString() : "No data available");
     setFeatures(null);
+    
     try {
-      const [predRes, featRes] = await Promise.all([
-        axios.post(`${API_BASE_URL}/api/predict`, { bounds, week: selectedWeek }),
-        axios.post(`${API_BASE_URL}/api/get-features`, { bounds }),
-      ]);
-      setPrediction(predRes.data.prediction);
+      const featRes = await axios.post(`${API_BASE_URL}/api/get-features`, { bounds });
       setFeatures(featRes.data.features || {});
     } catch (error) {
-      console.error("Prediction or feature fetch error:", error);
-      setPrediction("Error predicting fire risk");
+      console.error("Feature fetch error:", error);
+      setFeatures({});
     }
   };
 
@@ -432,7 +431,7 @@ availableWeeks.forEach((week, i) => {
         {isLoading && (
           <div className="loading-overlay">
             <div className="loading-spinner"></div>
-            <div className="loading-text">Loading map data...</div>
+            <div className="loading-text">Performing Intense Calculations...</div>
           </div>
         )}
       </main>
