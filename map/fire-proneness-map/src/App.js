@@ -14,7 +14,10 @@ const BUTTE_BOUNDS = [
 
 const TILE_SIZE = 1.0 / 69;
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "https://senior-project-gvgp.onrender.com";
+// Use local server in development, production server otherwise
+const API_BASE_URL = process.env.NODE_ENV === 'development' 
+  ? "http://localhost:10000"
+  : "https://fire-proneness-map-backend.onrender.com";
 
 function generateGrid(bounds) {
   const [southWest, northEast] = bounds;
@@ -51,6 +54,7 @@ function App() {
   const [availableWeeks, setAvailableWeeks] = useState([]);
   const [heatmapData, setHeatmapData] = useState(() => new Map());
   const [fireWeeks, setFireWeeks] = useState(new Set());
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setGrid(generateGrid(BUTTE_BOUNDS));
@@ -58,22 +62,39 @@ function App() {
 
   useEffect(() => {
     const fetchNoDataGrids = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ week: selectedWeek }),
-        });
-  
-        const data = await response.json();
-        console.log("No data grids:", data.no_data_grids);
-  
-        setNoDataGrids(new Set(data.no_data_grids));
-      } catch (error) {
-        console.error("Error fetching no-data grids:", error);
-        setNoDataGrids(new Set());
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ week: selectedWeek }),
+            credentials: 'include'
+          });
+    
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.details || `HTTP error! status: ${response.status}`);
+          }
+    
+          const data = await response.json();
+          if (data.error) {
+            throw new Error(data.error);
+          }
+    
+          setNoDataGrids(new Set(data.no_data_grids));
+          break;
+        } catch (error) {
+          console.error(`Error fetching no-data grids (attempt ${4-retries}/3):`, error);
+          retries--;
+          if (retries === 0) {
+            setNoDataGrids(new Set());
+          } else {
+            await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+          }
+        }
       }
     };
   
@@ -87,65 +108,110 @@ function App() {
 
   useEffect(() => {
     const fetchWeeks = async () => {
-      const res = await axios.get(`${API_BASE_URL}/api/get-weeks`);
-      setAvailableWeeks(res.data.weeks);
-      setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);
+      try {
+        const res = await axios.get(`${API_BASE_URL}/api/get-weeks`);
+        setAvailableWeeks(res.data.weeks);
+        setSelectedWeek(res.data.weeks[res.data.weeks.length - 1]);
+      } catch (error) {
+        console.error("Error fetching weeks:", error);
+      }
     };
-    fetchWeeks();
 
-    axios.get(`${API_BASE_URL}/api/get-fire-weeks`)
-    .then(res => setFireWeeks(new Set(res.data.fire_weeks)))
-    .catch(() => setFireWeeks(new Set()));
+    const fetchFireWeeks = async () => {
+      try {
+        const res = await axios.get(`${API_BASE_URL}/api/get-fire-weeks`);
+        setFireWeeks(new Set(res.data.fire_weeks));
+      } catch (error) {
+        console.error("Error fetching fire weeks:", error);
+        setFireWeeks(new Set());
+      }
+    };
+
+    Promise.all([fetchWeeks(), fetchFireWeeks()]).finally(() => {
+      setIsLoading(false);
+    });
   }, []);
 
   useEffect(() => {
     if (!selectedWeek || grid.length === 0) return;
   
+    setIsLoading(true);
     const fetchNoDataGrids = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ week: selectedWeek }),
-        });
-  
-        const data = await response.json();
-        console.log("No data grids:", data.no_data_grids);
-  
-        setNoDataGrids(new Set(data.no_data_grids));
-      } catch (error) {
-        console.error("Error fetching no-data grids:", error);
-        setNoDataGrids(new Set());
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ week: selectedWeek })
+          });
+    
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.details || `HTTP error! status: ${response.status}`);
+          }
+    
+          const data = await response.json();
+          if (data.error) {
+            throw new Error(data.error);
+          }
+    
+          setNoDataGrids(new Set(data.no_data_grids));
+          break;
+        } catch (error) {
+          console.error(`Error fetching no-data grids (attempt ${4-retries}/3):`, error);
+          retries--;
+          if (retries === 0) {
+            setNoDataGrids(new Set());
+          } else {
+            await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+          }
+        }
       }
     };
   
     const fetchHeatmapData = async () => {
-      const payload = grid.map((bounds) => ({
-        gridId: getGridIdFromBounds(bounds),
-        bounds,
-      }));
-      try {
-        const res = await axios.post(`${API_BASE_URL}/api/predict-all`, {
-          week: selectedWeek,
-          tiles: payload,
-        });
-    
-        const predictionsMap = new Map();
-        res.data.predictions.forEach((p) => {
-          predictionsMap.set(p.grid_id, p.prediction);
-        });
-        setHeatmapData(predictionsMap);
-      } catch (error) {
-        console.error("Error fetching heatmap data:", error);
-        setHeatmapData(new Map());
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const payload = grid.map((bounds) => ({
+            gridId: getGridIdFromBounds(bounds),
+            bounds,
+          }));
+          
+          const res = await axios.post(`${API_BASE_URL}/api/predict-all`, {
+            week: selectedWeek,
+            tiles: payload,
+          });
+      
+          if (res.data.error) {
+            throw new Error(res.data.error);
+          }
+      
+          const predictionsMap = new Map();
+          res.data.predictions.forEach((p) => {
+            predictionsMap.set(p.grid_id, p.prediction);
+          });
+          setHeatmapData(predictionsMap);
+          break;
+        } catch (error) {
+          console.error(`Error fetching heatmap data (attempt ${4-retries}/3):`, error);
+          retries--;
+          if (retries === 0) {
+            setHeatmapData(new Map());
+          } else {
+            await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+          }
+        }
       }
     };
   
     if (selectedWeek) {
-      fetchNoDataGrids();
-      fetchHeatmapData();
+      Promise.all([fetchNoDataGrids(), fetchHeatmapData()]).finally(() => {
+        setIsLoading(false);
+      });
       setSelectedBounds(null);
       setPrediction(null);
       setFeatures(null);
@@ -358,19 +424,24 @@ availableWeeks.forEach((week, i) => {
               const pred = heatmapData.get(gridId) ?? 0;
               const rawPred = Math.min(1, Math.max(0, pred));
 
-              // Stronger contrast
-              const norm = Math.pow(rawPred, 0.4);
+              // Apply power transformation for better contrast
+              const norm = Math.pow(rawPred, 0.4);  // Using 0.4 to compensate for server's 1.2
               
               let r, g, b;
-              if (norm < 0.5) {
-                // Neon yellow zone (brighter): from (255, 255, 50) → (255, 200, 0)
+              if (norm < 0.33) {
+                // Green to Yellow: from (50, 255, 50) → (255, 255, 50)
+                r = 50 + norm * 3 * 205;  // from 50 → 255
+                g = 255;
+                b = 50;
+              } else if (norm < 0.66) {
+                // Yellow to Orange: from (255, 255, 50) → (255, 165, 0)
                 r = 255;
-                g = 255 - norm * 2 * 55;  // from 255 → 200
-                b = 50 - norm * 2 * 50;   // from 50 → 0
+                g = 255 - (norm - 0.33) * 3 * 90;  // from 255 → 165
+                b = 50 - (norm - 0.33) * 3 * 50;   // from 50 → 0
               } else {
-                // Orange-red: from (255, 200, 0) → (255, 0, 0)
+                // Orange to Red: from (255, 165, 0) → (255, 0, 0)
                 r = 255;
-                g = 200 * (1 - (norm - 0.5) * 2);  // 200 → 0
+                g = 165 * (1 - (norm - 0.66) * 3);  // from 165 → 0
                 b = 0;
               }
 
@@ -393,23 +464,35 @@ availableWeeks.forEach((week, i) => {
             </Popup>
           )}
         </MapContainer>
+        
+        {isLoading && (
+          <div className="loading-overlay">
+            <div className="loading-spinner"></div>
+            <div className="loading-text">Loading map data...</div>
+          </div>
+        )}
       </main>
 
       {/* Sidebar for features */}
       <div className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <button className="close-btn" onClick={() => setSidebarOpen(false)}>X</button>
         <h3>Feature Details</h3>
-        {features ? (
-          <ul>
-            {Object.entries(features).map(([key, value]) => (
-              <li key={key}>
-                {key}: {typeof value === "number" ? value.toFixed(3) : value}
+        {features && Array.isArray(features) && features.length > 0 ? (
+          <ul className="feature-list">
+            {features.map((feature, index) => (
+              <li key={index} className={`feature-item ${feature.style}`} data-tooltip-id="feature-tooltip" data-tooltip-content={feature.tooltip}>
+                <div className="feature-header">
+                  <span className="feature-icon">{feature.icon}</span>
+                  <span className="feature-label">{feature.label}</span>
+                </div>
+                <div className="feature-value">{feature.value}</div>
               </li>
             ))}
           </ul>
         ) : (
-          <p>No features available.</p>
+          <p>No features available for this location.</p>
         )}
+        <Tooltip id="feature-tooltip" place="right" />
       </div>
       <div style={{
         position: 'absolute',

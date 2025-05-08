@@ -44,15 +44,15 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, resources={
-    r"/api/*": {
+    r"/*": {
         "origins": [
-            "https://fire-proneness-map-frontend.onrender.com",
             "http://localhost:3000",
-            "https://senior-project-gvgp.onrender.com"
+            "https://fire-proneness-map-frontend.onrender.com"
         ],
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
+        "supports_credentials": True,
+        "max_age": 3600
     }
 })
 
@@ -168,7 +168,8 @@ class DataManager:
             
             for i in range(0, len(week_data), batch_size):
                 chunk = week_data.iloc[i:i+batch_size].copy()
-                chunk["scaled"] = chunk["raw_prob"] * 50
+                # Raise raw probabilities to power of 1.2 for better contrast
+                chunk["scaled"] = (chunk["raw_prob"] * 500) ** 0.27
                 X = chunk[["scaled"]].values
                 
                 pt = PowerTransformer(method='yeo-johnson')
@@ -213,16 +214,56 @@ class DataManager:
         self.clear_old_cache()
         
         try:
-            # Read only the specific grid_id to minimize memory usage
+            # First try to get features directly
             df = pd.read_parquet(
                 CACHE_DIR / "final_data.csv.parquet",
                 filters=[('grid_id', '==', grid_id)]
             )
             
             if df.empty:
-                logger.warning(f"No features found for grid_id: {grid_id}")
-                return None
+                # If no direct data, try to interpolate from surrounding grids
+                y, x = map(int, grid_id.split('_'))
+                surrounding_features = []
                 
+                # Check surrounding grids in a 2x2 radius
+                for dy in range(-2, 3):
+                    for dx in range(-2, 3):
+                        if dy == 0 and dx == 0:
+                            continue
+                        neighbor_id = f"{y + dy}_{x + dx}"
+                        try:
+                            neighbor_df = pd.read_parquet(
+                                CACHE_DIR / "final_data.csv.parquet",
+                                filters=[('grid_id', '==', neighbor_id)]
+                            )
+                            if not neighbor_df.empty:
+                                # Weight by inverse distance
+                                distance = (dy**2 + dx**2)**0.5
+                                weight = 1.0 / (distance + 1)
+                                surrounding_features.append((neighbor_df.iloc[-1], weight))
+                        except Exception as e:
+                            logger.warning(f"Error reading neighbor {neighbor_id}: {e}")
+                            continue
+                
+                if surrounding_features:
+                    # Calculate weighted average of features
+                    total_weight = sum(w for _, w in surrounding_features)
+                    interpolated_features = {}
+                    
+                    # Get all feature columns (excluding metadata columns)
+                    feature_columns = [col for col in surrounding_features[0][0].index 
+                                    if col not in ['Unnamed: 0', 'grid_id', 'week_start', 'fire_occurred']]
+                    
+                    for col in feature_columns:
+                        weighted_sum = sum(row[col] * weight for row, weight in surrounding_features)
+                        interpolated_features[col] = weighted_sum / total_weight
+                    
+                    # Convert to DataFrame for consistent processing
+                    df = pd.DataFrame([interpolated_features])
+                else:
+                    logger.warning(f"No features found for grid_id: {grid_id}")
+                    return []
+            
             # Get the last row and convert to dict
             raw_features = df.iloc[-1].to_dict()
             
@@ -232,67 +273,67 @@ class DataManager:
             
             # Feature metadata
             feature_metadata = {
-                'dew_point': {
+                'mean_b4': {
+                    'label': 'Red Reflectance (Band 4)',
+                    'unit': '',
+                    'icon': '🟥',
+                    'tooltip': 'Reflectance in red spectrum; lower values suggest vegetation stress.',
+                    'style': 'red'
+                },
+                'mean_b5': {
+                    'label': 'Near-Infrared Reflectance (Band 5)',
+                    'unit': '',
+                    'icon': '🌿',
+                    'tooltip': 'Reflectance indicating vegetation health; higher values mean healthier plants.',
+                    'style': 'green'
+                },
+                'mean_b10': {
+                    'label': 'Land Surface Temperature (Thermal Infrared)',
+                    'unit': 'K',
+                    'icon': '🔥',
+                    'tooltip': 'Measures heat radiated from the land, indicating surface dryness.',
+                    'style': 'orange-red'
+                },
+                'ndvi': {
+                    'label': 'NDVI (Normalized Difference Vegetation Index)',
+                    'unit': '',
+                    'icon': '🌾',
+                    'tooltip': 'Scaled index measuring green vegetation cover across land surfaces.',
+                    'style': 'green-yellow'
+                },
+                'dewpoint_temperature_2m': {
                     'label': 'Dew Point',
                     'unit': 'K',
                     'icon': '🌡️',
-                    'tooltip': 'Moisture level near ground',
+                    'tooltip': 'Indicates moisture in the air near the ground surface.',
                     'style': 'light-blue'
                 },
-                'evaporation': {
-                    'label': 'Evaporation (Soil)',
+                'evaporation_from_bare_soil_sum': {
+                    'label': 'Evaporation from Soil',
                     'unit': 'm',
                     'icon': '🌞',
-                    'tooltip': 'Moisture loss from bare soil surface',
+                    'tooltip': 'Represents water loss from bare soil due to evaporation.',
                     'style': 'brown'
                 },
-                'land_temp': {
-                    'label': 'Land Temp (Infrared)',
-                    'unit': '',
-                    'icon': '🔥',
-                    'tooltip': 'Surface heat from thermal infrared band',
-                    'style': 'orange-red'
-                },
-                'red_reflectance': {
-                    'label': 'Red Reflectance',
-                    'unit': '',
-                    'icon': '🟥',
-                    'tooltip': 'Vegetation stress indicator (Band 4)',
-                    'style': 'red'
-                },
-                'nir_reflectance': {
-                    'label': 'NIR Reflectance',
-                    'unit': '',
-                    'icon': '🌿',
-                    'tooltip': 'Vegetation health (Band 5)',
-                    'style': 'green'
-                },
-                'ndvi': {
-                    'label': 'Vegetation Index',
-                    'unit': '',
-                    'icon': '🌾',
-                    'tooltip': 'Normalized vegetation index (0–1 scale)',
-                    'style': 'green-yellow'
-                },
-                'air_temp': {
-                    'label': 'Air Temp',
+                'temperature_2m': {
+                    'label': 'Air Temperature',
                     'unit': 'K',
                     'icon': '☀️',
-                    'tooltip': 'Temperature 2 meters above ground',
+                    'tooltip': 'Temperature two meters above ground; affects vegetation and soil drying.',
                     'style': 'red'
                 },
-                'precipitation': {
-                    'label': 'Precipitation',
+                'total_precipitation_sum': {
+                    'label': 'Precipitation Total',
                     'unit': 'm',
                     'icon': '🌧️',
-                    'tooltip': 'Total rainfall over the period',
+                    'tooltip': 'Cumulative rainfall over time; zero suggests dry fire-prone conditions.',
                     'style': 'blue'
                 },
-                'soil_moisture': {
+                'volumetric_soil_water_layer_2': {
                     'label': 'Soil Moisture (Layer 2)',
                     'unit': '',
                     'icon': '🌱',
-                    'tooltip': 'Moisture in subsurface soil layer',
+                    'tooltip': 'Water content in mid-level soil layer; influences vegetation dryness.',
                     'style': 'blue-brown'
                 }
             }
@@ -307,12 +348,22 @@ class DataManager:
                     # Special formatting for specific features
                     if key == 'ndvi':
                         formatted_value = round(value / 10000, 3)  # Convert to 0-1 scale
-                    elif key == 'air_temp':
+                    elif key == 'temperature_2m' or key == 'dewpoint_temperature_2m':
                         # Convert Kelvin to Celsius
                         celsius = value - 273.15
-                        formatted_value = f"{value} K ({celsius:.1f}°C)"
+                        formatted_value = f"{value:.3f} K ({celsius:.1f}°C)"
+                    elif key == 'evaporation_from_bare_soil_sum' or key == 'total_precipitation_sum':
+                        formatted_value = f"{value:.3f} {metadata['unit']}"
+                    else:
+                        formatted_value = f"{value:.3f} {metadata['unit']}"
                     
-                    formatted_features.append(f"{metadata['icon']} {formatted_value} {metadata['unit']}")
+                    formatted_features.append({
+                        'icon': metadata['icon'],
+                        'label': metadata['label'],
+                        'value': formatted_value,
+                        'tooltip': metadata['tooltip'],
+                        'style': metadata['style']
+                    })
             
             self._features_cache[grid_id] = formatted_features
             return formatted_features
@@ -320,7 +371,7 @@ class DataManager:
         except Exception as e:
             logger.error(f"Error loading features for grid {grid_id}: {str(e)}")
             logger.error(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
-            return None
+            return []
 
     def get_fire_weeks(self):
         if self._fire_data_cache is None:
@@ -530,20 +581,29 @@ def get_no_data_grids():
         if not week:
             return jsonify({"error": "Week not provided"}), 400
 
+        # Process in smaller batches to avoid memory issues
         predictions = data_manager.get_predictions_for_week(week)
         all_grids = generate_grid(BUTTE_BOUNDS)
         no_data_grids = []
         
-        for bounds in all_grids:
-            grid_id = get_grid_id_from_bounds(bounds)
-            if grid_id not in predictions:
-                no_data_grids.append(grid_id)
+        # Process grids in batches of 1000
+        batch_size = 1000
+        for i in range(0, len(all_grids), batch_size):
+            batch = all_grids[i:i + batch_size]
+            for bounds in batch:
+                grid_id = get_grid_id_from_bounds(bounds)
+                if grid_id not in predictions:
+                    no_data_grids.append(grid_id)
+            
+            # Force garbage collection after each batch
+            if i % (batch_size * 5) == 0:
+                gc.collect()
                 
         return jsonify({"no_data_grids": no_data_grids}), 200
 
     except Exception as e:
         logger.error(f"No-data grid error: {e}")
-        return jsonify({"error": "Failed to get no-data grids"}), 500
+        return jsonify({"error": "Failed to get no-data grids", "details": str(e)}), 500
 
 @app.route("/api/get-fire-weeks", methods=["GET"])
 def get_fire_weeks():
@@ -559,34 +619,47 @@ def predict_all():
     if request.method == "OPTIONS":
         return jsonify({}), 200
 
-    data = request.json or {}
-    week = data.get("week")
-    tiles = data.get("tiles", [])
+    try:
+        data = request.json or {}
+        week = data.get("week")
+        tiles = data.get("tiles", [])
 
-    if not week:
-        return jsonify({"error": "Week not provided"}), 400
-    if not isinstance(tiles, list):
-        return jsonify({"error": "Tiles must be a list"}), 400
+        if not week:
+            return jsonify({"error": "Week not provided"}), 400
+        if not isinstance(tiles, list):
+            return jsonify({"error": "Tiles must be a list"}), 400
 
-    predictions = data_manager.get_predictions_for_week(week)
-    results = []
-
-    for tile in tiles:
-        grid_id = tile.get("gridId") or get_grid_id_from_bounds(tile.get("bounds", []))
-        pred = predictions.get(grid_id)
-        if pred is None:
-            continue
+        predictions = data_manager.get_predictions_for_week(week)
+        results = []
+        
+        # Process tiles in batches of 500
+        batch_size = 500
+        for i in range(0, len(tiles), batch_size):
+            batch = tiles[i:i + batch_size]
+            for tile in batch:
+                grid_id = tile.get("gridId") or get_grid_id_from_bounds(tile.get("bounds", []))
+                pred = predictions.get(grid_id)
+                if pred is None:
+                    continue
+                    
+                b = tile["bounds"]
+                lat_center = (b[0][0] + b[1][0]) / 2
+                lng_center = (b[0][1] + b[1][1]) / 2
+                results.append({
+                    "grid_id": grid_id,
+                    "center": [lat_center, lng_center],
+                    "prediction": float(round(pred, 4))
+                })
             
-        b = tile["bounds"]
-        lat_center = (b[0][0] + b[1][0]) / 2
-        lng_center = (b[0][1] + b[1][1]) / 2
-        results.append({
-            "grid_id": grid_id,
-            "center": [lat_center, lng_center],
-            "prediction": float(round(pred, 4))
-        })
+            # Force garbage collection after each batch
+            if i % (batch_size * 5) == 0:
+                gc.collect()
 
-    return jsonify({"predictions": results}), 200
+        return jsonify({"predictions": results}), 200
+
+    except Exception as e:
+        logger.error(f"Predict-all error: {e}")
+        return jsonify({"error": "Failed to process predictions", "details": str(e)}), 500
 
 @app.route("/api/get-features", methods=["POST", "OPTIONS"])
 def get_features():
@@ -601,21 +674,29 @@ def get_features():
         grid_id = get_grid_id_from_bounds(bounds)
         features = data_manager.get_features(grid_id)
         
+        # Always return an array, even if empty
         if features is None:
-            return jsonify({"features": None}), 200
+            return jsonify({"features": []}), 200
 
         return jsonify({"features": features}), 200
 
     except Exception as e:
         logger.error(f"Feature retrieval error: {e}")
-        return jsonify({"error": "Failed to get features"}), 500
+        return jsonify({"error": "Failed to get features", "details": str(e)}), 500
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "https://fire-proneness-map-frontend.onrender.com")
-    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
-    response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-    response.headers.add("Access-Control-Allow-Credentials", "true")
+    origin = request.headers.get("Origin")
+    allowed_origins = [
+        "http://localhost:3000",
+        "https://fire-proneness-map-frontend.onrender.com"
+    ]
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Max-Age"] = "3600"
     return response
 
 if __name__ == "__main__":
