@@ -77,6 +77,54 @@ DATA_FILES = {
     }
 }
 
+def interpolate_missing_values(predictions, max_distance=2):
+    """Interpolate missing grid values using surrounding data, only for squares in the main rectangular grid"""
+    # Convert grid IDs to coordinates
+    grid_coords = {}
+    for grid_id in predictions.keys():
+        y, x = map(int, grid_id.split('_'))
+        grid_coords[grid_id] = (y, x)
+    
+    # Find the bounds of the grid
+    if not grid_coords:
+        return predictions
+        
+    min_y = min(y for y, _ in grid_coords.values())
+    max_y = max(y for y, _ in grid_coords.values())
+    min_x = min(x for _, x in grid_coords.values())
+    max_x = max(x for _, x in grid_coords.values())
+    
+    # Find missing grids within the rectangular bounds
+    missing_grids = []
+    for y in range(min_y, max_y + 1):
+        for x in range(min_x, max_x + 1):
+            grid_id = f"{y}_{x}"
+            if grid_id not in predictions:
+                missing_grids.append((grid_id, y, x))
+    
+    # Interpolate missing values
+    for grid_id, y, x in missing_grids:
+        # Find surrounding grids with data
+        surrounding_values = []
+        for dy in range(-max_distance, max_distance + 1):
+            for dx in range(-max_distance, max_distance + 1):
+                if dy == 0 and dx == 0:
+                    continue
+                neighbor_id = f"{y + dy}_{x + dx}"
+                if neighbor_id in predictions:
+                    # Weight by inverse distance
+                    distance = (dy**2 + dx**2)**0.5
+                    weight = 1.0 / (distance + 1)  # Add 1 to avoid division by zero
+                    surrounding_values.append((predictions[neighbor_id], weight))
+        
+        if surrounding_values:
+            # Calculate weighted average
+            total_weight = sum(w for _, w in surrounding_values)
+            interpolated_value = sum(v * w for v, w in surrounding_values) / total_weight
+            predictions[grid_id] = interpolated_value
+    
+    return predictions
+
 class DataManager:
     def __init__(self):
         self._predictions_cache = {}
@@ -137,6 +185,9 @@ class DataManager:
             
             processed_data = pd.concat(processed_chunks, ignore_index=True)
             predictions = processed_data.set_index("grid_id")["scaled"].to_dict()
+            
+            # Interpolate missing values
+            predictions = interpolate_missing_values(predictions)
             
             self._predictions_cache[cache_key] = predictions
             return predictions
@@ -261,13 +312,7 @@ class DataManager:
                         celsius = value - 273.15
                         formatted_value = f"{value} K ({celsius:.1f}°C)"
                     
-                    formatted_features.append({
-                        'name': key,
-                        'display': f"{metadata['icon']} {formatted_value} {metadata['unit']}",
-                        'label': metadata['label'],
-                        'tooltip': metadata['tooltip'],
-                        'style': metadata['style']
-                    })
+                    formatted_features.append(f"{metadata['icon']} {formatted_value} {metadata['unit']}")
             
             self._features_cache[grid_id] = formatted_features
             return formatted_features
