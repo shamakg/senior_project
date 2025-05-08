@@ -14,10 +14,8 @@ const BUTTE_BOUNDS = [
 
 const TILE_SIZE = 1.0 / 69;
 
-// Use local server in development, production server otherwise
-const API_BASE_URL = process.env.NODE_ENV === 'development' 
-  ? "http://localhost:10000"
-  : "https://senior-project-gvgp.onrender.com";
+// Use Render URL for both development and production
+const API_BASE_URL = "https://senior-project-gvgp.onrender.com";
 
 function generateGrid(bounds) {
   const [southWest, northEast] = bounds;
