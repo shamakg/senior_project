@@ -173,14 +173,106 @@ class DataManager:
                 return None
                 
             # Get the last row and convert to dict
-            features = df.iloc[-1].to_dict()
+            raw_features = df.iloc[-1].to_dict()
             
             # Remove unwanted columns
-            unwanted_columns = ['Unnamed: 0', 'grid_id', 'week_start']
-            features = {k: v for k, v in features.items() if k not in unwanted_columns}
+            unwanted_columns = ['Unnamed: 0', 'grid_id', 'week_start', 'fire_occurred']
+            raw_features = {k: v for k, v in raw_features.items() if k not in unwanted_columns}
             
-            self._features_cache[grid_id] = features
-            return features
+            # Feature metadata
+            feature_metadata = {
+                'dew_point': {
+                    'label': 'Dew Point',
+                    'unit': 'K',
+                    'icon': '🌡️',
+                    'tooltip': 'Moisture level near ground',
+                    'style': 'light-blue'
+                },
+                'evaporation': {
+                    'label': 'Evaporation (Soil)',
+                    'unit': 'm',
+                    'icon': '🌞',
+                    'tooltip': 'Moisture loss from bare soil surface',
+                    'style': 'brown'
+                },
+                'land_temp': {
+                    'label': 'Land Temp (Infrared)',
+                    'unit': '',
+                    'icon': '🔥',
+                    'tooltip': 'Surface heat from thermal infrared band',
+                    'style': 'orange-red'
+                },
+                'red_reflectance': {
+                    'label': 'Red Reflectance',
+                    'unit': '',
+                    'icon': '🟥',
+                    'tooltip': 'Vegetation stress indicator (Band 4)',
+                    'style': 'red'
+                },
+                'nir_reflectance': {
+                    'label': 'NIR Reflectance',
+                    'unit': '',
+                    'icon': '🌿',
+                    'tooltip': 'Vegetation health (Band 5)',
+                    'style': 'green'
+                },
+                'ndvi': {
+                    'label': 'Vegetation Index',
+                    'unit': '',
+                    'icon': '🌾',
+                    'tooltip': 'Normalized vegetation index (0–1 scale)',
+                    'style': 'green-yellow'
+                },
+                'air_temp': {
+                    'label': 'Air Temp',
+                    'unit': 'K',
+                    'icon': '☀️',
+                    'tooltip': 'Temperature 2 meters above ground',
+                    'style': 'red'
+                },
+                'precipitation': {
+                    'label': 'Precipitation',
+                    'unit': 'm',
+                    'icon': '🌧️',
+                    'tooltip': 'Total rainfall over the period',
+                    'style': 'blue'
+                },
+                'soil_moisture': {
+                    'label': 'Soil Moisture (Layer 2)',
+                    'unit': '',
+                    'icon': '🌱',
+                    'tooltip': 'Moisture in subsurface soil layer',
+                    'style': 'blue-brown'
+                }
+            }
+            
+            # Format features with metadata
+            formatted_features = {}
+            for key, value in raw_features.items():
+                if key in feature_metadata:
+                    metadata = feature_metadata[key]
+                    formatted_value = value
+                    
+                    # Special formatting for specific features
+                    if key == 'ndvi':
+                        formatted_value = round(value / 10000, 3)  # Convert to 0-1 scale
+                    elif key == 'air_temp':
+                        # Convert Kelvin to Celsius
+                        celsius = value - 273.15
+                        formatted_value = f"{value} K ({celsius:.1f}°C)"
+                    
+                    formatted_features[key] = {
+                        'value': formatted_value,
+                        'label': metadata['label'],
+                        'unit': metadata['unit'],
+                        'icon': metadata['icon'],
+                        'tooltip': metadata['tooltip'],
+                        'style': metadata['style']
+                    }
+            
+            self._features_cache[grid_id] = formatted_features
+            return formatted_features
+            
         except Exception as e:
             logger.error(f"Error loading features for grid {grid_id}: {str(e)}")
             logger.error(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
