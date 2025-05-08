@@ -17,7 +17,7 @@ const TILE_SIZE = 1.0 / 69;
 // Use local server in development, production server otherwise
 const API_BASE_URL = process.env.NODE_ENV === 'development' 
   ? "http://localhost:10000"
-  : "https://fire-proneness-map-backend.onrender.com";
+  : "https://senior-project-gvgp.onrender.com";
 
 function generateGrid(bounds) {
   const [southWest, northEast] = bounds;
@@ -61,52 +61,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const fetchNoDataGrids = async () => {
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ week: selectedWeek }),
-            credentials: 'include'
-          });
-    
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.details || `HTTP error! status: ${response.status}`);
-          }
-    
-          const data = await response.json();
-          if (data.error) {
-            throw new Error(data.error);
-          }
-    
-          setNoDataGrids(new Set(data.no_data_grids));
-          break;
-        } catch (error) {
-          console.error(`Error fetching no-data grids (attempt ${4-retries}/3):`, error);
-          retries--;
-          if (retries === 0) {
-            setNoDataGrids(new Set());
-          } else {
-            await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
-          }
-        }
-      }
-    };
-  
-    if (selectedWeek) {
-      fetchNoDataGrids();
-      setSelectedBounds(null);
-      setPrediction(null);
-      setFeatures(null);
-    }
-  }, [selectedWeek]);
-
-  useEffect(() => {
     const fetchWeeks = async () => {
       try {
         const res = await axios.get(`${API_BASE_URL}/api/get-weeks`);
@@ -138,7 +92,7 @@ function App() {
     setIsLoading(true);
     const fetchNoDataGrids = async () => {
       let retries = 3;
-      while (retries > 0) {
+      const attemptFetch = async () => {
         try {
           const response = await fetch(`${API_BASE_URL}/api/get-no-data-grids`, {
             method: "POST",
@@ -159,22 +113,28 @@ function App() {
           }
     
           setNoDataGrids(new Set(data.no_data_grids));
-          break;
+          return true;
         } catch (error) {
           console.error(`Error fetching no-data grids (attempt ${4-retries}/3):`, error);
           retries--;
           if (retries === 0) {
             setNoDataGrids(new Set());
-          } else {
-            await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+            return true;
           }
+          await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+          return false;
         }
+      };
+
+      while (retries > 0) {
+        const success = await attemptFetch();
+        if (success) break;
       }
     };
   
     const fetchHeatmapData = async () => {
       let retries = 3;
-      while (retries > 0) {
+      const attemptFetch = async () => {
         try {
           const payload = grid.map((bounds) => ({
             gridId: getGridIdFromBounds(bounds),
@@ -195,16 +155,22 @@ function App() {
             predictionsMap.set(p.grid_id, p.prediction);
           });
           setHeatmapData(predictionsMap);
-          break;
+          return true;
         } catch (error) {
           console.error(`Error fetching heatmap data (attempt ${4-retries}/3):`, error);
           retries--;
           if (retries === 0) {
             setHeatmapData(new Map());
-          } else {
-            await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+            return true;
           }
+          await new Promise(resolve => setTimeout(resolve, (4-retries) * 1000));
+          return false;
         }
+      };
+
+      while (retries > 0) {
+        const success = await attemptFetch();
+        if (success) break;
       }
     };
   
