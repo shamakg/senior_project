@@ -172,7 +172,13 @@ class DataManager:
                 logger.warning(f"No features found for grid_id: {grid_id}")
                 return None
                 
+            # Get the last row and convert to dict
             features = df.iloc[-1].to_dict()
+            
+            # Remove unwanted columns
+            unwanted_columns = ['Unnamed: 0', 'grid_id', 'week_start']
+            features = {k: v for k, v in features.items() if k not in unwanted_columns}
+            
             self._features_cache[grid_id] = features
             return features
         except Exception as e:
