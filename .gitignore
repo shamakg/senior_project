@@ -4,6 +4,14 @@ processed_landsat_data/
 map/fire-proneness-map/all_predictions_5years.csv
 map/fire-proneness-map/all_predictions_5years_v2.csv
 map/fire-proneness-map/final_data.csv
+final_data.csv
+intermediary_data/gridded_SR_B4.csv
+intermediary_data/gridded_SR_B5.csv
+intermediary_data/gridded_ST_B10.csv
+intermediary_data/gridded_ndvi.csv
+intermediary_data/features_labeled.npz
+intermediary_data/combined_ButteCounty_Averages_NEW.parquet
+
 map/fire-proneness-map/*.bak
 
 # Python
